@@ -2,4 +2,4 @@ name: paywall
 author: 洛蒂
 desc: API 双维度收费插件 - 按消息条数扣费，支持签到、商城、银行、卡密、红包
 version: 4.2.1
-repo: https://github.com/yourname/paywall
+repo: https://github.com/142737/astrbot_paywall
