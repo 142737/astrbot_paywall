@@ -1,0 +1,130 @@
+{
+  "cost_per_message": {
+    "description": "每条消息扣费积分",
+    "type": "float",
+    "hint": "每发一条消息扣多少积分",
+    "default": 1.0
+  },
+  "free_user_quota": {
+    "description": "个人免费额度",
+    "type": "int",
+    "hint": "新用户默认积分",
+    "default": 3000
+  },
+  "free_group_quota": {
+    "description": "群聊免费额度",
+    "type": "int",
+    "hint": "新群默认积分",
+    "default": 10000
+  },
+  "sign_min": {
+    "description": "签到最小积分",
+    "type": "int",
+    "hint": "签到最少给多少",
+    "default": 10
+  },
+  "sign_max": {
+    "description": "签到最大积分",
+    "type": "int",
+    "hint": "签到最多给多少",
+    "default": 100
+  },
+  "sign_item_chance": {
+    "description": "签到掉落概率(%)",
+    "type": "int",
+    "hint": "从items+general_items中随机掉落",
+    "default": 20
+  },
+  "items": {
+    "description": "道具商城预设",
+    "type": "list",
+    "hint": "格式: 物品名:价格，也是签到掉落池",
+    "default": [
+      "魔法药水:100",
+      "复活币:500",
+      "经验卷轴:50",
+      "强化石:150",
+      "火焰剑:800",
+      "冰霜弓:750",
+      "雷电法杖:1200",
+      "暗影匕首:600",
+      "圣光盾牌:900",
+      "治愈之环:400",
+      "传送卷轴:300",
+      "隐身斗篷:1000",
+      "龙鳞甲:1500",
+      "精灵弓:700",
+      "恶魔之刃:1100"
+    ]
+  },
+  "general_items": {
+    "description": "百货商城预设",
+    "type": "list",
+    "hint": "格式: 物品名:价格，也是签到掉落池",
+    "default": [
+      "钻石:1000",
+      "黄金:500",
+      "白银:200",
+      "青铜:100",
+      "瓷器:800",
+      "丝绸:600",
+      "茶叶:300",
+      "玉器:1500",
+      "珍珠:700",
+      "玛瑙:400",
+      "翡翠:1200",
+      "红木:350",
+      "古琴:900",
+      "书画:1100",
+      "古董:2000"
+    ]
+  },
+  "tax_rate": {
+    "description": "交易税率(%)",
+    "type": "int",
+    "hint": "商城交易扣税比例",
+    "default": 5
+  },
+  "bank_rate_min": {
+    "description": "银行利率最小值",
+    "type": "float",
+    "hint": "百分比，如1表示1%",
+    "default": 1.0
+  },
+  "bank_rate_max": {
+    "description": "银行利率最大值",
+    "type": "float",
+    "hint": "百分比，如2.5表示2.5%",
+    "default": 2.5
+  },
+  "enabled": {
+    "description": "启用插件",
+    "type": "bool",
+    "hint": "总开关",
+    "default": true
+  },
+  "contact_group": {
+    "description": "充值联系群号",
+    "type": "string",
+    "hint": "欠费提示的群号",
+    "default": ""
+  },
+  "admins": {
+    "description": "管理员QQ列表",
+    "type": "list",
+    "hint": "管理员免限额，必填",
+    "default": []
+  },
+  "user_whitelist": {
+    "description": "用户白名单",
+    "type": "list",
+    "hint": "免扣费用户",
+    "default": []
+  },
+  "group_whitelist": {
+    "description": "群聊白名单",
+    "type": "list",
+    "hint": "免扣费群号",
+    "default": []
+  }
+}
