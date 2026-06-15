@@ -1,4 +1,4 @@
-// Paywall 管理面板 JS
+﻿// Paywall 管理面板 JS
 const bridge = window.AstrBotPluginPage;
 let currentData = {};
 
@@ -128,6 +128,7 @@ async function quickRecharge(type, id, amount) {
         if (res.success) {
             showToast(`${type === 'user' ? '用户' : '群组'} ${id} ${amount > 0 ? '充值' : '扣费'} ${Math.abs(amount)} 积分成功`, 'success');
             refreshData();
+
         } else {
             showToast('操作失败: ' + (res.error || '未知错误'), 'error');
         }
@@ -164,6 +165,7 @@ async function confirmSetBalance() {
             hideModal();
             _setBalanceTarget = null;
             refreshData();
+
         } else {
             showToast('设置失败: ' + (res.error || '未知错误'), 'error');
         }
@@ -189,6 +191,7 @@ async function doRecharge() {
             document.getElementById('recharge-id').value = '';
             document.getElementById('recharge-amount').value = '';
             refreshData();
+
         } else {
             showToast('操作失败: ' + (res.error || '未知错误'), 'error');
         }
@@ -219,6 +222,7 @@ async function delistItem(itemId) {
             if (res.success) {
                 showToast('下架成功: ' + res.name, 'success');
                 refreshData();
+
             } else {
                 showToast('下架失败: ' + (res.error || '未知错误'), 'error');
             }
@@ -254,6 +258,7 @@ async function confirmListItem() {
             document.getElementById('list-name').value = '';
             document.getElementById('list-price').value = '';
             refreshData();
+
         } else {
             showToast('上架失败: ' + (res.error || '未知错误'), 'error');
         }
@@ -289,6 +294,7 @@ async function confirmGenKey() {
             hideModal();
             document.getElementById('key-amount').value = '';
             refreshData();
+
         } else {
             showToast('生成失败: ' + (res.error || '未知错误'), 'error');
         }
@@ -298,7 +304,36 @@ async function confirmGenKey() {
     setLoading('genkey-loading', false);
 }
 
-// 初始化页面结构
+async function uploadWallpaper() {
+    const fileInput = document.getElementById('bg-upload');
+    const file = fileInput.files[0];
+    if (!file) { showToast('请先选择图片', 'error'); return; }
+    showConfirm('是否将「' + file.name + '」设置为壁纸？确定后将自动上传并刷新页面。', async function() {
+        document.getElementById('bg-file-name').textContent = file.name + ' (上传中...)';
+        setLoading('bg-upload-loading', true);
+        try {
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const base64 = e.target.result.split(',')[1];
+                const res = await bridge.apiPost('upload_bg', {data: base64, name: file.name});
+                setLoading('bg-upload-loading', false);
+                if (res.success) {
+                    showConfirm('壁纸已更新，是否刷新页面？', function() { location.reload(); });
+                } else {
+                    showToast('上传失败: ' + (res.error || '未知错误'), 'error');
+                }
+            };
+            reader.onerror = function() {
+                showToast('读取文件失败', 'error');
+                setLoading('bg-upload-loading', false);
+            };
+            reader.readAsDataURL(file);
+        } catch (e) {
+            showToast('上传失败: ' + e.message, 'error');
+            setLoading('bg-upload-loading', false);
+        }
+    });
+}// 初始化页面结构
 function initApp() {
     document.getElementById('app').innerHTML = `
         <div class="container">
@@ -319,6 +354,7 @@ function initApp() {
                 <div class="tab" onclick="switchTab('shop')">🛒 商城管理</div>
                 <div class="tab" onclick="switchTab('keys')">🔑 卡密管理</div>
                 <div class="tab" onclick="switchTab('recharge')">💳 快捷充值</div>
+                <div class="tab" onclick="switchTab('wallpaper')">🖼️ 更换壁纸</div>
             </div>
             <div id="tab-users" class="tab-content active">
                 <div class="panel">
@@ -358,7 +394,24 @@ function initApp() {
                 </div>
             </div>
         </div>
-        <div class="modal-overlay" id="modal-gen-key">
+        <div id="tab-wallpaper" class="tab-content">
+            <div class="panel">
+                <div class="panel-header">🖼️ 更换壁纸</div>
+                <div class="panel-body">
+                    <p style="margin-bottom:15px;color:rgba(255,255,255,0.8);">上传一张 JPG/PNG 图片作为管理面板的壁纸（自动保存为 bg.jpg）。</p>
+                    <div class="file-input-area">
+                        <input type="file" id="bg-upload" accept="image/jpeg,image/png" style="display:none;" onchange="uploadWallpaper()">
+                        <button class="btn btn-primary" onclick="document.getElementById('bg-upload').click()">📁 选择图片</button>
+                        <span id="bg-file-name" style="margin-left:10px;color:rgba(255,255,255,0.6);">未选择文件</span>
+                        <span id="bg-upload-loading" style="display:none;margin-left:10px;" class="loading"></span>
+                    </div>
+                    <div style="margin-top:20px;padding:15px;background:rgba(255,255,255,0.1);border-radius:8px;">
+                        <p style="margin-bottom:5px;color:rgba(255,255,255,0.8);">💡 提示：新图片会自动覆盖旧文件，上传后刷新页面即可看到效果。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-overlay" id="modal-gen-key"id="modal-gen-key"id="modal-gen-key">
             <div class="modal">
                 <h2>🔑 生成卡密</h2>
                 <div class="form-group"><label>面额</label><input type="number" id="key-amount" placeholder="积分数量" min="1"></div>
@@ -398,6 +451,7 @@ function initApp() {
 bridge.ready().then(() => {
     initApp();
     refreshData();
+
 }).catch(e => {
     console.error('Bridge 初始化失败:', e);
     document.getElementById('app').innerHTML = '<div style="padding:40px;text-align:center;color:#fff;">❌ 插件 Bridge 初始化失败，请刷新页面重试</div>';
