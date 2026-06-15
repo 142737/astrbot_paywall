@@ -369,7 +369,7 @@ function initApp() {
         <div class="modal-overlay" id="modal-list-item">
             <div class="modal">
                 <h2>➕ 上架商品</h2>
-                <div class="form-group"><label>商品名称</label><input type="text" id="list-name" placeholder="例如: 钻石"></div>
+                <div class="form-group"><label>商品名称</label><input type="text" id="list-name" placeholder="例如: 蘑菇"></div>
                 <div class="form-group"><label>价格（积分）</label><input type="number" id="list-price" placeholder="例如: 1000" min="0" step="1"></div>
                 <div class="form-group"><label>库存</label><input type="number" id="list-stock" placeholder="例如: 999" min="1" step="1" value="999"></div>
                 <div class="form-group"><label>商城类型</label><select id="list-type"><option value="百货">百货商城</option><option value="道具">道具商城</option></select></div>
