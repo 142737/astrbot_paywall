@@ -164,7 +164,7 @@ class PluginAPI:
                 return jsonify({"success": False, "error": "缺少商品编号"})
 
             item = await p._get_shop_item(item_id)
-            shop_type = "杂货"
+            shop_type = "百货"
             if item is None:
                 item = await p._get_item_shop_item(item_id)
                 shop_type = "道具"
