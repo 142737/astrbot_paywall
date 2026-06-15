@@ -678,6 +678,7 @@ class PaywallPlugin(Star):
             # 直接返回提示语，不再调用 LLM
             tip = f"❌ 你的积分好像用完啦~想要继续聊天的话，需要{contact}充值一下哦！"
             event.set_result(event.plain_result(tip))
+            event.stop_event()
             logger.info(f"[Paywall] {btype}:{bid} 余额不足，直接拦截回复")
             return
 
@@ -1268,16 +1269,19 @@ class PaywallPlugin(Star):
             seller_summary = []
             for item_id, item, shop_type, count, price in purchase_list:
                 seller_id = item["seller"]
-                tax = price * (self.tax_rate / 100)
-                seller_income = price - tax
+                if seller_id == buyer_id:
+                    tax = 0
+                    seller_income = price
+                else:
+                    tax = price * (self.tax_rate / 100)
+                    seller_income = price - tax
 
-                if seller_id != buyer_id:
-                    seller_data = await self._get_data("user", seller_id)
-                    seller_data["balance"] += seller_income
-                    await self._save_data("user", seller_id, seller_data)
+                seller_data = await self._get_data("user", seller_id)
+                seller_data["balance"] += seller_income
+                await self._save_data("user", seller_id, seller_data)
 
                 # 税款给第一个管理员
-                if self.admins:
+                if self.admins and tax > 0:
                     admin_data = await self._get_data("user", self.admins[0])
                     admin_data["balance"] += tax
                     await self._save_data("user", self.admins[0], admin_data)
@@ -1395,7 +1399,7 @@ class PaywallPlugin(Star):
 
         # 卖家到账（扣税）
         seller_id = item["seller"]
-        
+
         if seller_id == buyer_id:
             # 自己买自己的，不收税，直接加回去
             seller_income = final_price
@@ -1508,7 +1512,7 @@ class PaywallPlugin(Star):
         if item is None:
             item = await self._get_item_shop_item(item_id)
             shop_type = "道具"
-            
+
         if item is None:
             yield event.plain_result("❌ 商品不存在")
             return
