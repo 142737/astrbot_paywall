@@ -1,4 +1,4 @@
-"""
+﻿"""
 AstrBot 收费插件 v4.0 - 群/私聊双维度计费 + 卡密充值 + 签到系统 + 积分商城 + 人格化欠费提示
 按消息条数扣费（一积分一句话）
 使用 AstrBot KV 存储
@@ -6,17 +6,1570 @@ AstrBot 收费插件 v4.0 - 群/私聊双维度计费 + 卡密充值 + 签到系
 管理员免限额
 """
 
+import sqlite3
 import json
 import random
 import secrets
 import string
 from datetime import datetime, timedelta
+from typing import List, Dict
 import asyncio
 from collections import Counter
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api.provider import ProviderRequest, LLMResponse
 from astrbot.api import AstrBotConfig, logger
+
+# ==================== 冒险系统静态数据 ====================
+REGIONS = [
+    (1, '🌱 新手村外围', 1, 10, 20, 5, 20, 30, 1, 3, 1, 2, 0, 0, 1, 3, '新手友好，薄雾弥漫的安全地带', '🌱 见习冒险者'),
+    (2, '🌲 低语森林', 11, 20, 20, 10, 25, 25, 1, 4, 1, 2, 0, 0, 2, 4, '树木低语，草药丰富', '🌿 森林行者'),
+    (3, '💧 幽暗沼泽', 21, 30, 20, 20, 30, 20, 1, 4, 1, 3, 1, 2, 3, 6, '毒气弥漫，危险重重', '🪵 沼泽猎人'),
+    (4, '🔥 烈焰峡谷', 31, 40, 20, 25, 35, 15, 2, 5, 1, 3, 1, 2, 4, 8, '熔岩流淌，炙热难耐', '⚔️ 烈焰勇者'),
+    (5, '❄️ 冰封雪原', 41, 50, 20, 30, 35, 15, 2, 5, 1, 3, 1, 2, 5, 10, '寒风刺骨，冰雪覆盖', '❄️ 雪域行者'),
+    (6, '⛈️ 风暴高原', 51, 60, 20, 35, 40, 10, 2, 5, 1, 3, 1, 2, 6, 12, '雷霆万钧，风暴不息', '⛈️ 风暴使者'),
+    (7, '🏛️ 远古遗迹', 61, 70, 20, 40, 40, 10, 2, 5, 1, 3, 1, 2, 8, 15, '古老文明，神秘莫测', '🏛️ 遗迹探索者'),
+    (8, '🐉 龙之巢穴', 71, 80, 20, 45, 45, 5, 3, 5, 1, 3, 1, 2, 10, 20, '巨龙盘踞，危机四伏', '🐉 龙裔战士'),
+    (9, '🌑 虚空裂隙', 81, 90, 20, 50, 45, 5, 3, 5, 2, 3, 1, 2, 15, 30, '虚空扭曲，现实破碎', '🌑 虚空行者'),
+    (10, '🌳 世界树之巅', 91, 100, 20, 55, 50, 5, 3, 5, 2, 3, 1, 2, 20, 50, '世界之巅，王者领域', '👑 世界之王'),
+]
+
+ITEMS = [
+    (1, '野草', 'common', 1, 2, 1, 'material', 'alchemist', 35, '随处可见的野草'),
+    (2, '树枝', 'common', 1, 2, 1, 'material', 'blacksmith', 30, '干枯的树枝'),
+    (3, '小石子', 'common', 1, 1, 1, 'material', 'blacksmith', 25, '普通的小石子'),
+    (4, '野果', 'common', 2, 3, 1, 'material', None, 20, '酸甜的野果'),
+    (5, '蘑菇', 'rare', 5, 8, 1, 'material', 'alchemist', 10, '罕见的食用蘑菇'),
+    (6, '铁矿石碎片', 'rare', 8, 10, 1, 'material', 'blacksmith', 8, '铁矿石的碎块'),
+    (10, '草药', 'common', 3, 5, 2, 'material', 'alchemist', 35, '制药的基础材料'),
+    (11, '木材', 'common', 3, 5, 2, 'material', 'blacksmith', 30, '可用的木材'),
+    (12, '树皮', 'common', 2, 4, 2, 'material', None, 25, '剥落的树皮'),
+    (13, '晨露', 'rare', 10, 15, 2, 'material', 'alchemist', 12, '清晨的露水，蕴含魔力'),
+    (14, '精灵花粉', 'rare', 15, 20, 2, 'material', 'alchemist', 10, '精灵花的花粉'),
+    (15, '硬木', 'rare', 12, 15, 2, 'material', 'blacksmith', 8, '坚硬的木材'),
+    (20, '沼泽苔藓', 'common', 5, 8, 3, 'material', 'alchemist', 35, '沼泽特有的苔藓'),
+    (21, '毒蘑菇', 'common', 6, 10, 3, 'material', 'alchemist', 30, '有毒的蘑菇'),
+    (22, '淤泥', 'common', 4, 6, 3, 'material', 'blacksmith', 25, '沼泽淤泥'),
+    (23, '蛇蜕', 'rare', 20, 25, 3, 'material', None, 12, '蛇类蜕下的皮'),
+    (24, '毒液囊', 'rare', 25, 30, 3, 'material', 'alchemist', 8, '装有毒液的囊'),
+    (25, '沼泽之心', 'epic', 50, 60, 3, 'breakthrough', None, 3, '20级突破材料'),
+    (30, '火成岩', 'common', 8, 12, 4, 'material', 'blacksmith', 35, '火山形成的岩石'),
+    (31, '硫磺', 'common', 7, 10, 4, 'material', 'alchemist', 30, '火山的硫磺'),
+    (32, '焦炭', 'common', 6, 9, 4, 'material', 'blacksmith', 25, '燃烧后的炭'),
+    (33, '熔岩晶', 'rare', 30, 35, 4, 'material', 'blacksmith', 12, '熔岩凝结的晶体'),
+    (34, '火焰花', 'rare', 25, 30, 4, 'material', 'alchemist', 10, '火焰中生长的花'),
+    (35, '炎龙之息', 'epic', 80, 100, 4, 'breakthrough', None, 3, '30级突破材料'),
+    (40, '冰晶', 'common', 12, 15, 5, 'material', None, 35, '凝结的冰晶'),
+    (41, '雪莲花', 'common', 15, 18, 5, 'material', 'alchemist', 30, '雪中绽放的莲花'),
+    (42, '冻土', 'common', 10, 12, 5, 'material', 'blacksmith', 25, '冻结的土壤'),
+    (43, '永冻冰', 'rare', 40, 50, 5, 'material', 'blacksmith', 12, '永不融化的冰'),
+    (44, '寒冰草', 'rare', 35, 45, 5, 'material', 'alchemist', 10, '寒冰中生长的草'),
+    (45, '霜龙鳞', 'epic', 120, 150, 5, 'breakthrough', None, 3, '40级突破材料'),
+    (50, '风信子', 'common', 18, 22, 6, 'material', 'alchemist', 35, '风中摇曳的花'),
+    (51, '雷云石', 'common', 20, 25, 6, 'material', 'blacksmith', 30, '蕴含雷电的石头'),
+    (52, '羽毛', 'common', 15, 18, 6, 'material', None, 25, '飞鸟的羽毛'),
+    (53, '风暴眼', 'rare', 60, 80, 6, 'material', None, 12, '风暴中心的结晶'),
+    (54, '雷霆晶', 'rare', 70, 90, 6, 'material', 'blacksmith', 10, '雷霆之力凝结'),
+    (55, '风龙之翼', 'epic', 200, 250, 6, 'breakthrough', None, 3, '50级突破材料'),
+    (60, '古陶片', 'common', 25, 30, 7, 'material', None, 35, '远古陶器的碎片'),
+    (61, '符文石', 'common', 30, 35, 7, 'material', None, 30, '刻有符文的石头'),
+    (62, '化石', 'common', 22, 28, 7, 'material', None, 25, '远古生物化石'),
+    (63, '远古铭文', 'rare', 100, 120, 7, 'material', None, 12, '远古文字记录'),
+    (64, '时光砂', 'rare', 120, 150, 7, 'material', 'alchemist', 10, '蕴含时光之力'),
+    (65, '遗迹核心', 'epic', 300, 400, 7, 'breakthrough', None, 3, '60级突破材料'),
+    (70, '龙鳞屑', 'common', 40, 50, 8, 'material', 'blacksmith', 35, '脱落的龙鳞碎片'),
+    (71, '龙血草', 'common', 45, 55, 8, 'material', 'alchemist', 30, '龙血滋养的草'),
+    (72, '龙骨碎片', 'common', 50, 60, 8, 'material', 'blacksmith', 25, '破碎的龙骨'),
+    (73, '龙晶', 'rare', 200, 250, 8, 'material', 'blacksmith', 12, '龙族力量结晶'),
+    (74, '龙血', 'rare', 250, 300, 8, 'material', 'alchemist', 10, '珍贵的龙血'),
+    (75, '龙王之心', 'epic', 800, 1000, 8, 'breakthrough', None, 3, '70级突破材料'),
+    (80, '虚空尘埃', 'common', 80, 100, 9, 'material', None, 35, '虚空飘落的尘埃'),
+    (81, '裂隙石', 'common', 100, 120, 9, 'material', 'blacksmith', 30, '裂隙边缘的石头'),
+    (82, '暗物质', 'common', 90, 110, 9, 'material', 'alchemist', 25, '神秘的暗物质'),
+    (83, '虚空晶', 'rare', 400, 500, 9, 'material', None, 12, '虚空凝结的晶体'),
+    (84, '混沌碎片', 'rare', 500, 600, 9, 'material', None, 10, '混沌的碎片'),
+    (85, '虚空之核', 'epic', 1500, 2000, 9, 'breakthrough', None, 3, '80级突破材料'),
+    (90, '世界树叶', 'common', 200, 250, 10, 'material', None, 35, '世界树的叶子'),
+    (91, '树液', 'common', 250, 300, 10, 'material', 'alchemist', 30, '世界树的汁液'),
+    (92, '古木', 'common', 300, 350, 10, 'material', 'blacksmith', 25, '世界树的木材'),
+    (93, '生命精华', 'rare', 1000, 1200, 10, 'material', 'alchemist', 12, '生命之力精华'),
+    (94, '世界树之种', 'rare', 1500, 1800, 10, 'material', 'blacksmith', 10, '世界树的种子'),
+    (95, '世界树之心', 'epic', 5000, 5000, 10, 'breakthrough', None, 3, '90级突破材料'),
+]
+
+TITLES = [
+    (1, 9, '🌱 见习冒险者'), (10, 19, '🌿 森林行者'), (20, 29, '🪵 资深猎人'),
+    (30, 39, '⚔️ 烈焰勇者'), (40, 49, '❄️ 雪域行者'), (50, 59, '⛈️ 风暴使者'),
+    (60, 69, '🏛️ 遗迹探索者'), (70, 79, '🐉 龙裔战士'), (80, 89, '🌑 虚空行者'),
+    (90, 99, '🌳 世界守护者'), (100, 100, '👑 世界之王'),
+]
+
+BREAK_MAP = {
+    10: ('初级冒险者徽章', 1), 20: ('沼泽之心', 3), 30: ('炎龙之息', 3),
+    40: ('霜龙鳞', 3), 50: ('风龙之翼', 3), 60: ('遗迹核心', 3),
+    70: ('龙王之心', 3), 80: ('虚空之核', 3), 90: ('世界树之心', 3),
+    100: ('世界树之心', 5),
+}
+
+PROF_CONFIG = {
+    'gatherer': {'name': '采集师', 'emoji': '🌿'},
+    'alchemist': {'name': '制药师', 'emoji': '⚗️'},
+    'blacksmith': {'name': '锻造师', 'emoji': '⚒️'}
+}
+
+PROF_LEVEL_REQ = {1: 0, 2: 500, 3: 2000}
+
+# 配方数据 (id, 名称, 职业, 职业等级要求, 材料json, 产物id, 产物数量, 基础成功率, 描述)
+RECIPES = [
+    # 制药师配方
+    (1, '初级体力药水', 'alchemist', 1, '{"1": 2, "4": 1}', 101, 1, 85, '恢复15点体力'),
+    (2, '中级体力药水', 'alchemist', 2, '{"10": 3, "13": 1}', 102, 1, 80, '恢复30点体力'),
+    (3, '高级体力药水', 'alchemist', 3, '{"20": 3, "24": 1}', 103, 1, 75, '恢复50点体力'),
+    (4, '经验增幅剂', 'alchemist', 1, '{"5": 2, "14": 1}', 104, 1, 70, '下次冒险经验+25%'),
+    (5, '幸运采集液', 'alchemist', 2, '{"12": 3, "15": 1}', 105, 1, 65, '下次冒险稀有率+20%'),
+    (6, '危险规避散', 'alchemist', 2, '{"21": 2, "23": 1}', 106, 1, 60, '下次冒险危险率-15%'),
+    # 锻造师配方
+    (10, '冒险者护符', 'blacksmith', 1, '{"3": 3, "6": 1}', 110, 1, 80, '装备后经验+8%'),
+    (11, '采集者手套', 'blacksmith', 1, '{"2": 3, "12": 2}', 111, 1, 75, '装备后收获数量+1'),
+    (12, '防御护石', 'blacksmith', 2, '{"22": 2, "30": 1}', 112, 1, 70, '装备后危险率-5%'),
+    (13, '幸运指环', 'blacksmith', 2, '{"32": 2, "33": 1}', 113, 1, 65, '装备后史诗掉率+5%'),
+    (14, '大师工具箱', 'blacksmith', 3, '{"43": 2, "53": 1}', 114, 1, 60, '装备后锻造成功率+10%'),
+]
+
+# 产物物品 (id, 名称, 稀有度, 基础价格, 类型, 效果类型, 效果值, 描述, hp加成, 攻击加成, 防御加成)
+CRAFT_PRODUCTS = [
+    (101, '初级体力药水', 'common', 50, 'consumable', 'stamina', 15, '恢复15点体力', 0, 0, 0),
+    (102, '中级体力药水', 'rare', 120, 'consumable', 'stamina', 30, '恢复30点体力', 0, 0, 0),
+    (103, '高级体力药水', 'epic', 300, 'consumable', 'stamina', 50, '恢复50点体力', 0, 0, 0),
+    (104, '经验增幅剂', 'rare', 150, 'consumable', 'exp_bonus', 0.25, '下次冒险经验+25%', 0, 0, 0),
+    (105, '幸运采集液', 'rare', 180, 'consumable', 'rare_bonus', 0.20, '下次冒险稀有率+20%', 0, 0, 0),
+    (106, '危险规避散', 'rare', 160, 'consumable', 'danger_reduce', 0.15, '下次冒险危险率-15%', 0, 0, 0),
+    (110, '冒险者护符', 'rare', 200, 'equipment', 'exp_bonus', 0.08, '装备后经验+8%', 20, 0, 0),
+    (111, '采集者手套', 'rare', 220, 'equipment', 'qty_bonus', 1, '装备后收获数量+1', 0, 5, 0),
+    (112, '防御护石', 'epic', 350, 'equipment', 'danger_reduce', 0.05, '装备后危险率-5%', 50, 0, 10),
+    (113, '幸运指环', 'epic', 400, 'equipment', 'epic_bonus', 0.05, '装备后史诗掉率+5%', 30, 8, 0),
+    (114, '大师工具箱', 'epic', 500, 'equipment', 'craft_bonus', 0.10, '装备后锻造成功率+10%', 40, 0, 5),
+    # 新增高级装备
+    (115, '龙鳞铠甲', 'epic', 800, 'equipment', 'hp_bonus', 0.15, '装备后血量上限+15%', 100, 0, 20),
+    (116, '风暴之剑', 'epic', 750, 'equipment', 'atk_bonus', 0.10, '装备后攻击+10%', 0, 25, 0),
+    (117, '虚空护盾', 'legendary', 1200, 'equipment', 'def_bonus', 0.20, '装备后防御+20%', 150, 0, 30),
+]
+
+
+
+
+INIT_SQL = """
+CREATE TABLE IF NOT EXISTS regions (
+    id INTEGER PRIMARY KEY, name TEXT NOT NULL, min_level INTEGER NOT NULL,
+    max_level INTEGER NOT NULL, cost REAL NOT NULL DEFAULT 20, danger_rate INTEGER DEFAULT 5,
+    trigger_rate INTEGER DEFAULT 30, empty_rate INTEGER DEFAULT 20,
+    qty_common_min INTEGER DEFAULT 1, qty_common_max INTEGER DEFAULT 3,
+    qty_rare_min INTEGER DEFAULT 1, qty_rare_max INTEGER DEFAULT 2,
+    qty_epic_min INTEGER DEFAULT 1, qty_epic_max INTEGER DEFAULT 2,
+    exp_min INTEGER DEFAULT 1, exp_max INTEGER DEFAULT 3, desc TEXT, unlock_title TEXT
+);
+CREATE TABLE IF NOT EXISTS level_config (
+    level INTEGER PRIMARY KEY, title TEXT NOT NULL, exp_needed INTEGER NOT NULL,
+    is_breakthrough INTEGER DEFAULT 0, break_item TEXT, break_count INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS items (
+    id INTEGER PRIMARY KEY, name TEXT NOT NULL, rarity TEXT DEFAULT 'common',
+    base_price REAL DEFAULT 0, exp_value INTEGER DEFAULT 0, region_id INTEGER,
+    item_type TEXT DEFAULT 'material', profession_bonus TEXT, weight INTEGER DEFAULT 10, desc TEXT
+);
+CREATE TABLE IF NOT EXISTS user_levels (
+    user_id TEXT PRIMARY KEY, group_id TEXT, level INTEGER DEFAULT 1, exp INTEGER DEFAULT 0,
+    total_exp INTEGER DEFAULT 0, profession TEXT DEFAULT 'none', profession_level INTEGER DEFAULT 1,
+    profession_exp INTEGER DEFAULT 0, gather_count INTEGER DEFAULT 0, danger_count INTEGER DEFAULT 0,
+    break_through_count INTEGER DEFAULT 0, last_daily_reset DATE, stamina INTEGER DEFAULT 100,
+    max_stamina INTEGER DEFAULT 100, last_stamina_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    current_region INTEGER DEFAULT 1, adventure_start TIMESTAMP, adventure_region INTEGER,
+    adventure_active INTEGER DEFAULT 0, adventure_last_check TIMESTAMP,
+    adventure_items TEXT DEFAULT '{}', adventure_exp INTEGER DEFAULT 0, adventure_danger INTEGER DEFAULT 0,
+    adventure_buffs TEXT DEFAULT '{}',
+    hp INTEGER DEFAULT 100, max_hp INTEGER DEFAULT 100, attack INTEGER DEFAULT 10, defense INTEGER DEFAULT 5
+);
+CREATE TABLE IF NOT EXISTS inventory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, group_id TEXT,
+    item_id INTEGER NOT NULL, quantity INTEGER DEFAULT 0, UNIQUE(user_id, group_id, item_id)
+);
+CREATE TABLE IF NOT EXISTS gather_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, group_id TEXT, region_id INTEGER,
+    result TEXT, items_gained TEXT, exp_gained INTEGER DEFAULT 0, cost REAL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS recipes (
+    id INTEGER PRIMARY KEY, name TEXT NOT NULL, profession TEXT NOT NULL,
+    profession_level INTEGER DEFAULT 1, materials TEXT NOT NULL, product_id INTEGER NOT NULL,
+    product_qty INTEGER DEFAULT 1, base_rate INTEGER DEFAULT 70, desc TEXT
+);
+CREATE TABLE IF NOT EXISTS user_buffs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, buff_type TEXT NOT NULL,
+    buff_value REAL DEFAULT 0, buff_desc TEXT, expires_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS user_equipments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id INTEGER NOT NULL,
+    slot TEXT DEFAULT 'accessory', equipped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, slot)
+);
+"""
+
+class AdventureSystem:
+    def __init__(self, db_path: str, plugin=None):
+        self.db_path = db_path
+        self.plugin = plugin
+        self._init_db()
+
+    def _init_db(self):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.executescript(INIT_SQL)
+        c.executemany('INSERT OR IGNORE INTO regions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', REGIONS)
+        for lv in range(1, 101):
+            exp = int(50 * (lv ** 1.5))
+            is_b = 1 if lv % 10 == 0 and lv > 0 else 0
+            b_item, b_cnt = (None, 0)
+            if is_b and lv in BREAK_MAP:
+                b_item, b_cnt = BREAK_MAP[lv]
+            title = '🌱 见习冒险者'
+            for s, e, t in TITLES:
+                if s <= lv <= e:
+                    title = t
+                    break
+            c.execute('INSERT OR IGNORE INTO level_config (level,title,exp_needed,is_breakthrough,break_item,break_count) VALUES (?,?,?,?,?,?)',
+                      (lv, title, exp, is_b, b_item, b_cnt))
+        c.executemany('INSERT OR IGNORE INTO items (id,name,rarity,base_price,exp_value,region_id,item_type,profession_bonus,weight,desc) VALUES (?,?,?,?,?,?,?,?,?,?)', ITEMS)
+        # 初始化配方产物到物品表
+        for pid, name, rarity, price, itype, effect, val, desc, hp_b, atk_b, def_b in CRAFT_PRODUCTS:
+            c.execute('INSERT OR IGNORE INTO items (id,name,rarity,base_price,exp_value,region_id,item_type,profession_bonus,weight,desc) VALUES (?,?,?,?,0,0,?,?,0,?)',
+                      (pid, name, rarity, price, itype, None, desc))
+        # 初始化配方表
+        for rid, name, prof, plv, mats, pid, qty, rate, desc in RECIPES:
+            c.execute('INSERT OR IGNORE INTO recipes (id,name,profession,profession_level,materials,product_id,product_qty,base_rate,desc) VALUES (?,?,?,?,?,?,?,?,?)',
+                      (rid, name, prof, plv, mats, pid, qty, rate, desc))
+        c.execute('PRAGMA table_info(user_levels)')
+        user_level_cols = {row[1] for row in c.fetchall()}
+        if 'adventure_buffs' not in user_level_cols:
+            c.execute("ALTER TABLE user_levels ADD COLUMN adventure_buffs TEXT DEFAULT '{}'")
+        conn.commit()
+        conn.close()
+
+    # ---------- 体力 ----------
+    def _recover_stamina(self, user_id: str) -> int:
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT stamina,max_stamina,last_stamina_update FROM user_levels WHERE user_id=?', (user_id,))
+        row = c.fetchone()
+        if not row:
+            conn.close(); return 100
+        st, mx, last = row
+        mx = mx or 100
+        if last:
+            last_dt = datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
+            mins = int((datetime.now() - last_dt).total_seconds() // 60)
+            rec = mins // 5
+            if rec > 0:
+                st = min(mx, st + rec)
+                new_t = last_dt + timedelta(minutes=rec * 5)
+                c.execute('UPDATE user_levels SET stamina=?,last_stamina_update=? WHERE user_id=?',
+                          (st, new_t.strftime("%Y-%m-%d %H:%M:%S"), user_id))
+                conn.commit()
+        conn.close()
+        return st
+
+    def _get_stamina_info(self, user_id: str) -> dict:
+        st = self._recover_stamina(user_id)
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT max_stamina,last_stamina_update FROM user_levels WHERE user_id=?', (user_id,))
+        row = c.fetchone()
+        conn.close()
+        mx, last = (row[0] or 100, row[1]) if row else (100, None)
+        nxt = "已满"
+        if st < mx and last:
+            last_dt = datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
+            nxt_dt = last_dt + timedelta(minutes=5)
+            if nxt_dt > datetime.now():
+                sec = int((nxt_dt - datetime.now()).total_seconds())
+                nxt = f"{sec//60}分{sec%60}秒"
+            else:
+                nxt = "即将恢复"
+        return {'stamina': st, 'max': mx, 'next_recover': nxt}
+
+    # ---------- 用户数据 ----------
+    def _get_user_data(self, user_id: str, group_id: str) -> Dict:
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT * FROM user_levels WHERE user_id=?', (user_id,))
+        row = c.fetchone()
+        if not row:
+            now = datetime.now()
+            c.execute('INSERT INTO user_levels (user_id,group_id,level,exp,profession,last_daily_reset,last_stamina_update) VALUES (?,?,1,0,"none",?,?)',
+                      (user_id, group_id or "", now.strftime("%Y-%m-%d"), now.strftime("%Y-%m-%d %H:%M:%S")))
+            conn.commit()
+            c.execute('SELECT * FROM user_levels WHERE user_id=?', (user_id,))
+            row = c.fetchone()
+        columns = [desc[0] for desc in c.description]
+        conn.close()
+        data = {k: v for k, v in zip(columns, row)}
+        data.setdefault('adventure_buffs', '{}')
+        data.setdefault('hp', 100)
+        data.setdefault('max_hp', 100)
+        data.setdefault('attack', 10)
+        data.setdefault('defense', 5)
+        data.setdefault('last_reset', data.get('last_daily_reset'))
+        data.setdefault('break_through', data.get('break_through_count', 0))
+        return data
+
+    def _get_level_config(self, level: int) -> Dict:
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT * FROM level_config WHERE level=?', (level,))
+        r = c.fetchone()
+        conn.close()
+        if r:
+            return {'level': r[0], 'title': r[1], 'exp_needed': r[2], 'is_break': r[3], 'break_item': r[4], 'break_count': r[5]}
+        return None
+
+    def _get_region(self, region_id: int) -> Dict:
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT * FROM regions WHERE id=?', (region_id,))
+        r = c.fetchone()
+        conn.close()
+        if r:
+            keys = ['id','name','min_level','max_level','cost','danger_rate','trigger_rate','empty_rate',
+                    'qty_common_min','qty_common_max','qty_rare_min','qty_rare_max','qty_epic_min','qty_epic_max',
+                    'exp_min','exp_max','desc','title']
+            return {k: v for k, v in zip(keys, r)}
+        return None
+
+    def _get_region_by_level(self, level: int) -> Dict:
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT * FROM regions WHERE min_level<=? AND max_level>=?', (level, level))
+        r = c.fetchone()
+        conn.close()
+        if r:
+            keys = ['id','name','min_level','max_level','cost','danger_rate','trigger_rate','empty_rate',
+                    'qty_common_min','qty_common_max','qty_rare_min','qty_rare_max','qty_epic_min','qty_epic_max',
+                    'exp_min','exp_max','desc','title']
+            return {k: v for k, v in zip(keys, r)}
+        return None
+
+    # ---------- 冒险结算（职业加成 + 升级检测）----------
+    def _calc_adventure_loot(self, user_id: str, group_id: str, force_end: bool = False) -> dict:
+        user = self._get_user_data(user_id, group_id)
+        if not user.get('adventure_start') or not user.get('adventure_last_check'):
+            return {}
+        start = datetime.strptime(user['adventure_start'], "%Y-%m-%d %H:%M:%S")
+        last = datetime.strptime(user['adventure_last_check'], "%Y-%m-%d %H:%M:%S")
+        now = datetime.now()
+        end = start + timedelta(hours=1)
+        calc_end = min(now, end)
+        if force_end:
+            calc_end = now
+        elapsed = int((calc_end - last).total_seconds() // 60)
+        if elapsed <= 0:
+            return {}
+
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        rid = user['adventure_region']
+        c.execute('SELECT trigger_rate,danger_rate,empty_rate,qty_common_min,qty_common_max,qty_rare_min,qty_rare_max,qty_epic_min,qty_epic_max,exp_min,exp_max FROM regions WHERE id=?', (rid,))
+        cfg = c.fetchone()
+        if not cfg:
+            conn.close(); return {}
+        (trig, dang, emp, cmin, cmax, rmin, rmax, emin, emax, exp_min, exp_max) = cfg
+
+        c.execute('SELECT id,name,rarity,base_price,exp_value,weight,profession_bonus FROM items WHERE region_id=? AND item_type="material"', (rid,))
+        pool = c.fetchall()
+        prof = user.get('profession', 'none')
+        prof_level = user.get('profession_level', 1)
+
+        # 采集师加成
+        trigger_bonus = 0
+        empty_bonus = 0
+        qty_bonus = 0
+        if prof == 'gatherer':
+            trigger_bonus = prof_level * 5
+            empty_bonus = prof_level * 5
+            qty_bonus = prof_level
+        actual_trigger = min(100, trig + trigger_bonus)
+        actual_empty = max(0, emp - empty_bonus)
+        try:
+            adventure_buffs = json.loads(user.get('adventure_buffs') or '{}')
+        except Exception:
+            adventure_buffs = {}
+        exp_rate = float(adventure_buffs.get('exp_bonus', 0) or 0)
+        rare_bonus = float(adventure_buffs.get('rare_bonus', 0) or 0)
+        danger_reduce = float(adventure_buffs.get('danger_reduce', 0) or 0)
+        actual_danger = max(0, int(round(dang * (1 - danger_reduce))))
+
+        try:
+            total_items = json.loads(user.get('adventure_items', '{}') or '{}')
+            if not isinstance(total_items, dict):
+                total_items = {}
+        except Exception:
+            total_items = {}
+        total_exp = user.get('adventure_exp', 0)
+        total_dang = user.get('adventure_danger', 0)
+        new_items = {}
+        new_exp = 0
+        new_dang = 0
+        prof_exp_gain = 0
+        prof_result = {'leveled_up': False, 'new_level': prof_level}
+
+        for _ in range(elapsed):
+            if random.randint(1, 100) > actual_trigger:
+                continue
+            roll = random.randint(1, 100)
+            if roll <= actual_danger:
+                new_dang += 1
+                new_exp += random.randint(exp_min, max(exp_min, exp_max // 2))
+            elif roll <= actual_danger + actual_empty:
+                new_exp += random.randint(exp_min, exp_max)
+            else:
+                if not pool:
+                    new_exp += random.randint(exp_min, exp_max)
+                    continue
+                def wgt(item):
+                    w = item[5]
+                    if item[6] and item[6] == prof:
+                        w = int(w * 1.5)
+                    if rare_bonus > 0:
+                        if item[2] == 'rare':
+                            w = int(w * (1 + rare_bonus))
+                        elif item[2] == 'epic':
+                            w = int(w * (1 + rare_bonus * 1.5))
+                        elif item[2] == 'legendary':
+                            w = int(w * (1 + rare_bonus * 2))
+                    return w
+                weights = [wgt(p) for p in pool]
+                tw = sum(weights)
+                if tw <= 0:
+                    new_exp += random.randint(exp_min, exp_max)
+                    continue
+                pick = random.randint(1, tw)
+                cur = 0
+                drop = None
+                for item, w in zip(pool, weights):
+                    cur += w
+                    if pick <= cur:
+                        drop = item
+                        break
+                if drop:
+                    iid, name, rarity, price, ev, _, _ = drop
+                    if rarity == 'common':
+                        qty = random.randint(cmin, cmax)
+                    elif rarity == 'rare':
+                        qty = random.randint(rmin, rmax)
+                    elif rarity == 'epic':
+                        qty = random.randint(emin, emax)
+                    else:
+                        qty = 1
+                    if prof == 'gatherer':
+                        qty += qty_bonus
+                    new_items[name] = new_items.get(name, 0) + qty
+                    new_exp += ev * qty
+                    prof_exp_gain += qty
+                    c.execute('INSERT INTO inventory (user_id,group_id,item_id,quantity) VALUES (?,?,?,?) ON CONFLICT(user_id,group_id,item_id) DO UPDATE SET quantity=quantity+?', (user_id, group_id or "", iid, qty, qty))
+                else:
+                    # 遇险扣HP
+                    dmg = random.randint(5, 15)
+                    c.execute('SELECT hp FROM user_levels WHERE user_id=?', (user_id,))
+                    hprow = c.fetchone()
+                    if hprow:
+                        new_hp_val = max(1, hprow[0] - dmg)
+                        c.execute('UPDATE user_levels SET hp=? WHERE user_id=?', (new_hp_val, user_id))
+
+        if exp_rate > 0 and new_exp > 0:
+            new_exp = max(1, int(round(new_exp * (1 + exp_rate))))
+
+        # 采集师职业经验（上限20）
+        if prof == 'gatherer' and prof_exp_gain > 0:
+            prof_exp_gain = min(prof_exp_gain, 20)
+            prof_result = self._add_profession_exp(user_id, prof_exp_gain)
+
+        for name, qty in new_items.items():
+            total_items[name] = total_items.get(name, 0) + qty
+        total_exp += new_exp
+        total_dang += new_dang
+        ended = (now >= end) or force_end
+        new_last = calc_end.strftime("%Y-%m-%d %H:%M:%S")
+
+        # 冒险结束时加经验并检测升级
+        level_result = {'leveled_up': False, 'new_level': user['level'], 'need_profession': False, 'breakthrough_ready': False}
+        if ended:
+            c.execute('INSERT INTO gather_logs (user_id,group_id,region_id,result,items_gained,exp_gained,cost) VALUES (?,?,?,?,?,?,?)',
+                      (user_id, group_id or "", rid, 'ended', json.dumps(total_items, ensure_ascii=False), total_exp, 0))
+            c.execute('UPDATE user_levels SET adventure_active=0,adventure_start=NULL,adventure_region=NULL,adventure_last_check=NULL,adventure_items="{}",adventure_exp=0,adventure_danger=0,adventure_buffs="{}" WHERE user_id=?', (user_id,))
+            conn.commit()
+            conn.close()
+            if total_exp > 0:
+                level_result = self._add_exp(user_id, group_id, total_exp)
+        else:
+            c.execute('UPDATE user_levels SET adventure_last_check=?,adventure_items=?,adventure_exp=?,adventure_danger=? WHERE user_id=?',
+                      (new_last, json.dumps(total_items, ensure_ascii=False), total_exp, total_dang, user_id))
+            conn.commit()
+            conn.close()
+
+        return {
+            'new_items': new_items, 'new_exp': new_exp, 'new_danger': new_dang,
+            'total': total_items, 'total_exp': total_exp, 'total_danger': total_dang,
+            'ended': ended, 'elapsed_min': int((calc_end - start).total_seconds() // 60),
+            'remain_min': max(0, 60 - int((now - start).total_seconds() // 60)) if not ended else 0,
+            'level_up': level_result.get('leveled_up', False),
+            'new_level': level_result.get('new_level', user['level']),
+            'need_profession': level_result.get('need_profession', False),
+            'breakthrough_ready': level_result.get('breakthrough_ready', False),
+            'prof_level_up': prof_result.get('leveled_up', False),
+            'new_prof_level': prof_result.get('new_level', prof_level),
+            'prof_exp': prof_exp_gain if prof == 'gatherer' else 0,
+            'buffs': adventure_buffs,
+        }
+
+    async def _sync_adventure_items_to_kv(self, user_id: str, result: dict) -> None:
+        """将冒险收获结果同步到商城背包（KV存储）。"""
+        if not self.plugin or not result or not result.get('new_items'):
+            return
+        try:
+            inv = await self.plugin._get_inventory(user_id)
+            now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            for name, qty in result['new_items'].items():
+                c.execute('SELECT base_price FROM items WHERE name=?', (name,))
+                row = c.fetchone()
+                price = row[0] if row else 0
+                for _ in range(qty):
+                    inv.append({'name': name, 'price': price, 'source': '冒险', 'date': now_str})
+            conn.close()
+            await self.plugin._save_inventory(user_id, inv)
+        except Exception:
+            pass
+    # ---------- 格式化收获报告（状态栏置顶）----------
+    def _format_loot(self, result: dict, user_data: dict) -> str:
+        region = self._get_region(user_data.get('adventure_region'))
+        rname = region['name'] if region else "未知地区"
+        rarity_emoji = {'common': '⚪', 'rare': '🔵', 'epic': '🟣', 'legendary': '🟡'}
+        is_ended = result.get('ended', False)
+        prof = user_data.get('profession', 'none')
+        prof_level = user_data.get('profession_level', 1)
+
+        # ===== 最上面：状态栏 =====
+        config = self._get_level_config(user_data['level'])
+        title = config['title'] if config else '冒险者'
+        msg = f"📊 冒险等级：Lv.{user_data['level']} {title}"
+        if config:
+            msg += f"  经验：{user_data['exp']}/{config['exp_needed']}"
+        msg += "\n"
+
+        if prof != 'none':
+            prof_name = PROF_CONFIG.get(prof, {}).get('name', prof)
+            titles = {1: '初级', 2: '资深', 3: '大师'}
+            pt = titles.get(prof_level, '初级')
+            msg += f"🎭 职业：{pt}{prof_name} Lv.{prof_level}"
+            msg += f"  经验：{user_data.get('profession_exp', 0)}"
+            if prof_level < 3:
+                msg += f"/{PROF_LEVEL_REQ[prof_level + 1]}"
+            msg += ""
+
+        msg += "\n"  # 空行分隔
+
+        # ===== 冒险报告标题 =====
+        msg += f"📦 **{rname} 冒险报告**"
+        if is_ended:
+            msg += "⏱️ 状态：冒险已结束"
+        else:
+            msg += f"⏱️ 状态：冒险进行中（剩余 {result.get('remain_min', 0)} 分钟）"
+        msg += f"📍 地区：{rname}"
+
+        # 遇险和经验
+        if result.get('buffs', {}).get('descs'):
+            msg += "🧪 药水效果：" + "、".join(result['buffs']['descs'])
+
+        if result.get('new_danger', 0) > 0:
+            msg += f"⚠️ 本次遇险：{result['new_danger']} 次"
+
+        if is_ended:
+            if result.get('new_exp', 0) > 0:
+                msg += f"📖 本次冒险经验：+{result['new_exp']}"
+            if result.get('prof_exp', 0) > 0 and prof == 'gatherer':
+                msg += f"🎭 本次职业经验：+{result['prof_exp']}"
+        else:
+            if result.get('new_exp', 0) > 0:
+                msg += f"📖 本次新增经验：+{result['new_exp']}"
+        msg += ""
+
+        # 本次新增
+        if result.get('new_items'):
+            msg += "🎒 **本次新增：**"
+            for name, qty in sorted(result['new_items'].items(), key=lambda x: -x[1]):
+                conn = sqlite3.connect(self.db_path)
+                c = conn.cursor()
+                c.execute('SELECT rarity FROM items WHERE name=?', (name,))
+                r = c.fetchone()
+                conn.close()
+                emoji = rarity_emoji.get(r[0] if r else 'common', '⚪')
+                msg += f"  {emoji} {name} x{qty}"
+            msg += ""
+
+        # 累计收获
+        if result.get('total'):
+            msg += "📊 **累计收获：**"
+            for name, qty in sorted(result['total'].items(), key=lambda x: -x[1]):
+                conn = sqlite3.connect(self.db_path)
+                c = conn.cursor()
+                c.execute('SELECT rarity FROM items WHERE name=?', (name,))
+                r = c.fetchone()
+                conn.close()
+                emoji = rarity_emoji.get(r[0] if r else 'common', '⚪')
+                msg += f"  {emoji} {name} x{qty}"
+            msg += ""
+
+        # 升级提示（仅结束时）
+        if is_ended:
+            msg += "━━━━━━━━━━━━━━"
+            if result.get('level_up'):
+                new_lv = result.get('new_level', user_data['level'])
+                config_new = self._get_level_config(new_lv)
+                title_new = config_new['title'] if config_new else '冒险者'
+                msg += f"🎉 **恭喜你升级到 Lv.{new_lv}！** {title_new}"
+            if result.get('need_profession'):
+                msg += "🎭 **转职提示**：你已达到10级，可以转职了！"
+                msg += "💡 `pw转职 [采集师/制药师/锻造师]`"
+            if result.get('breakthrough_ready'):
+                config_br = self._get_level_config(user_data['level'])
+                if config_br and config_br['break_item']:
+                    msg += f"🔒 **突破任务**：提交 `{config_br['break_item']} x{config_br['break_count']}`"
+                    msg += f"💡 `pw突破` 提交材料"
+            if result.get('prof_level_up'):
+                prof_name = PROF_CONFIG.get(prof, {}).get('name', prof)
+                new_pl = result.get('new_prof_level', prof_level)
+                titles = {1: '初级', 2: '资深', 3: '大师'}
+                pt = titles.get(new_pl, '初级')
+                msg += f"🎭 **职业升级！** {prof_name} Lv.{new_pl}（{pt}）"
+            msg += ""
+
+        # 底部提示
+        if not is_ended:
+            msg += "💡 冒险继续中... 过会儿再 `pw查看收获`"
+
+        return msg
+
+    # ---------- 经验与升级 ----------
+    def _add_exp(self, user_id: str, group_id: str, exp: int) -> Dict:
+        user = self._get_user_data(user_id, group_id)
+        new_exp = user['exp'] + exp
+        new_total = user['total_exp'] + exp
+        new_level = user['level']
+        leveled_up = False
+        breakthrough_ready = False
+        need_profession = False
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        while True:
+            config = self._get_level_config(new_level)
+            if not config:
+                break
+            if config['is_break']:
+                if new_exp >= config['exp_needed']:
+                    breakthrough_ready = True
+                    new_exp = config['exp_needed']
+                break
+            else:
+                if new_exp >= config['exp_needed']:
+                    new_exp -= config['exp_needed']
+                    new_level += 1
+                    next_config = self._get_level_config(new_level)
+                    if next_config:
+                        leveled_up = True
+                        if new_level == 10 and user['profession'] == 'none':
+                            need_profession = True
+                            new_level = 9
+                            new_exp = config['exp_needed']
+                            leveled_up = False
+                            break
+                    else:
+                        new_level -= 1
+                        new_exp += config['exp_needed']
+                        break
+                else:
+                    break
+        # 升级时增加属性
+        new_max_hp = 100 + (new_level - 1) * 10
+        new_attack = 10 + (new_level - 1) * 2
+        new_defense = 5 + (new_level - 1) * 1
+        # HP 按比例增长，保持当前比例
+        hp_ratio = user.get('hp', 100) / max(1, user.get('max_hp', 100))
+        new_hp = int(new_max_hp * hp_ratio)
+        c.execute('UPDATE user_levels SET level=?,exp=?,total_exp=?,gather_count=gather_count+1,max_hp=?,hp=?,attack=?,defense=? WHERE user_id=?',
+                  (new_level, new_exp, new_total, new_max_hp, new_hp, new_attack, new_defense, user_id))
+        conn.commit()
+        conn.close()
+        return {
+            'leveled_up': leveled_up, 'breakthrough_ready': breakthrough_ready,
+            'need_profession': need_profession, 'new_level': new_level,
+            'exp': new_exp, 'next_needed': self._get_level_config(new_level)['exp_needed'] if self._get_level_config(new_level) else 0
+        }
+
+    # ---------- 职业系统 ----------
+    def _add_profession_exp(self, user_id: str, exp_gain: int) -> dict:
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT profession,profession_level,profession_exp FROM user_levels WHERE user_id=?', (user_id,))
+        row = c.fetchone()
+        if not row or row[0] == 'none':
+            conn.close()
+            return {'leveled_up': False, 'msg': ''}
+        prof, lv, exp = row
+        new_exp = exp + exp_gain
+        new_lv = lv
+        up_msg = ''
+        while new_lv < 3:
+            need = PROF_LEVEL_REQ[new_lv + 1]
+            if new_exp >= need:
+                new_lv += 1
+                titles = {1: '初级', 2: '资深', 3: '大师'}
+                up_msg = f"🎉 职业升级！{PROF_CONFIG[prof]['name']} Lv.{new_lv}（{titles.get(new_lv, '大师')}）"
+            else:
+                break
+        c.execute('UPDATE user_levels SET profession_exp=?,profession_level=? WHERE user_id=?', (new_exp, new_lv, user_id))
+        conn.commit()
+        conn.close()
+        return {'leveled_up': new_lv > lv, 'new_level': new_lv, 'exp': new_exp, 'msg': up_msg, 'next_need': PROF_LEVEL_REQ[new_lv + 1] if new_lv < 3 else 0}
+
+    def change_profession(self, user_id: str, group_id: str, profession_name: str) -> dict:
+        valid = {'采集师': 'gatherer', '制药师': 'alchemist', '锻造师': 'blacksmith'}
+        if profession_name not in valid:
+            return {'success': False, 'msg': '❌ 可选：采集师、制药师、锻造师'}
+        target = valid[profession_name]
+        user = self._get_user_data(user_id, group_id)
+        current = user.get('profession', 'none')
+        if current == target:
+            lv = user.get('profession_level', 1)
+            exp = user.get('profession_exp', 0)
+            titles = {1: '初级', 2: '资深', 3: '大师'}
+            t = titles.get(lv, '初级')
+            cfg = PROF_CONFIG[target]
+            msg = f"🎭 你当前是 **{cfg['emoji']} {t}{profession_name}**"
+            msg += f"📖 职业等级：Lv.{lv}  经验：{exp}"
+            if lv < 3:
+                need = PROF_LEVEL_REQ[lv + 1]
+                msg += f" / {need}（还需 {need - exp}）"
+            else:
+                msg += "（已满级）"
+            bonuses = {
+                'gatherer': f"触发率+{lv*5}%，空手率-{lv*5}%，数量+{lv}",
+                'alchemist': f"制药成功率+{lv*15}%，效果+{(lv-1)*20}%",
+                'blacksmith': f"锻造成功率+{lv*15}%，属性+{(lv-1)*20}%"
+            }
+            msg += f"✨ 加成：{bonuses[target]}"
+            return {'success': True, 'msg': msg}
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('UPDATE user_levels SET profession=?,profession_level=1,profession_exp=0 WHERE user_id=?', (target, user_id))
+        conn.commit()
+        conn.close()
+        cfg = PROF_CONFIG[target]
+        msg = f"🆕 **切换职业：{cfg['emoji']} {profession_name}**"
+        msg += f"📖 从 **初级（Lv.1）** 开始，经验：0"
+        msg += f"⚠️ 注意：切换职业后，旧职业进度**全部清零**！"
+        bonuses = {
+            'gatherer': "触发率+5%，空手率-5%，数量+1（每次冒险最多+20职业经验）",
+            'alchemist': "制药成功率+15%，效果+0%（失败+1~5经验，成功+合成经验）",
+            'blacksmith': "锻造成功率+15%，属性+0%（失败+1~5经验，成功+合成经验）"
+        }
+        msg += f"💡 加成：{bonuses[target]}"
+        return {'success': True, 'msg': msg}
+
+    def get_craft_bonus(self, user_id: str, craft_type: str) -> dict:
+        user = self._get_user_data(user_id, "")
+        prof = user.get('profession', 'none')
+        level = user.get('profession_level', 1)
+        if craft_type == 'alchemist' and prof == 'alchemist':
+            return {'success_rate': level * 15, 'effect_bonus': (level - 1) * 20}
+        elif craft_type == 'blacksmith' and prof == 'blacksmith':
+            return {'success_rate': level * 15, 'attr_bonus': (level - 1) * 20}
+        return {'success_rate': 0, 'effect_bonus': 0, 'attr_bonus': 0}
+
+    # ==================== 职业技能系统 ====================
+    def _get_inventory(self, user_id: str, group_id: str) -> dict:
+        """获取用户背包 {item_id: quantity}（优先使用商城背包）"""
+        if self.plugin:
+            import asyncio
+            try:
+                inv = asyncio.get_event_loop().run_until_complete(self.plugin._get_inventory(user_id))
+                # 将商城背包按物品名称统计，再映射到 item_id
+                conn = sqlite3.connect(self.db_path)
+                c = conn.cursor()
+                c.execute('SELECT id, name FROM items')
+                id_name_map = {row[1]: row[0] for row in c.fetchall()}
+                conn.close()
+                result = {}
+                for item in inv:
+                    name = item.get("name", "")
+                    iid = id_name_map.get(name)
+                    if iid:
+                        result[iid] = result.get(iid, 0) + 1
+                return result
+            except Exception:
+                pass
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT item_id, quantity FROM inventory WHERE user_id=? AND group_id=?', (user_id, group_id or ""))
+        items = {row[0]: row[1] for row in c.fetchall()}
+        conn.close()
+        return items
+
+    def _remove_items(self, user_id: str, group_id: str, items_dict: dict) -> bool:
+        """扣除材料，items_dict = {item_id: quantity}（优先使用商城背包）"""
+        # 使用商城背包
+        if self.plugin:
+            import asyncio
+            try:
+                inv = asyncio.get_event_loop().run_until_complete(self.plugin._get_inventory(user_id))
+                # 获取物品名称映射
+                conn = sqlite3.connect(self.db_path)
+                c = conn.cursor()
+                name_map = {}
+                for iid in items_dict.keys():
+                    c.execute('SELECT name FROM items WHERE id=?', (int(iid),))
+                    r = c.fetchone()
+                    if r:
+                        name_map[int(iid)] = r[0]
+                conn.close()
+                # 检查数量
+                for iid, need_qty in items_dict.items():
+                    iid = int(iid)
+                    name = name_map.get(iid, '')
+                    have = sum(1 for item in inv if item.get("name") == name)
+                    if have < need_qty:
+                        return False
+                # 扣除
+                for iid, need_qty in items_dict.items():
+                    iid = int(iid)
+                    name = name_map.get(iid, '')
+                    removed = 0
+                    new_inv = []
+                    for item in inv:
+                        if item.get("name") == name and removed < need_qty:
+                            removed += 1
+                        else:
+                            new_inv.append(item)
+                    inv = new_inv
+                asyncio.get_event_loop().run_until_complete(self.plugin._save_inventory(user_id, inv))
+                return True
+            except Exception:
+                pass
+        # 回退到 SQLite
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        for iid, qty in items_dict.items():
+            c.execute('SELECT quantity FROM inventory WHERE user_id=? AND group_id=? AND item_id=?', (user_id, group_id or "", iid))
+            row = c.fetchone()
+            if not row or row[0] < qty:
+                conn.close()
+                return False
+        for iid, qty in items_dict.items():
+            c.execute('UPDATE inventory SET quantity=quantity-? WHERE user_id=? AND group_id=? AND item_id=?', (qty, user_id, group_id or "", iid))
+            c.execute('DELETE FROM inventory WHERE user_id=? AND group_id=? AND item_id=? AND quantity<=0', (user_id, group_id or "", iid))
+        conn.commit()
+        conn.close()
+        return True
+
+    def _add_item(self, user_id: str, group_id: str, item_id: int, qty: int):
+        """添加物品到背包（优先使用商城背包系统）"""
+        # 获取物品信息
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT name, base_price FROM items WHERE id=?', (item_id,))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return
+        name, price = row
+        # 使用商城背包
+        if self.plugin:
+            import asyncio
+            try:
+                inv = asyncio.get_event_loop().run_until_complete(self.plugin._get_inventory(user_id))
+                today = datetime.now().strftime("%Y-%m-%d")
+                for _ in range(qty):
+                    inv.append({"name": name, "price": float(price), "source": "冒险采集", "date": today})
+                asyncio.get_event_loop().run_until_complete(self.plugin._save_inventory(user_id, inv))
+                return
+            except Exception:
+                pass
+        # 回退到 SQLite
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('INSERT INTO inventory (user_id,group_id,item_id,quantity) VALUES (?,?,?,?) ON CONFLICT(user_id,group_id,item_id) DO UPDATE SET quantity=quantity+?', (user_id, group_id or "", item_id, qty, qty))
+        conn.commit()
+        conn.close()
+
+    def _get_user_equipments(self, user_id: str) -> list:
+        """获取用户已装备的物品"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT item_id, quantity FROM inventory WHERE user_id=? AND item_id >= 110', (user_id,))
+        eqs = c.fetchall()
+        conn.close()
+        return eqs
+
+    def _get_buffs(self, user_id: str) -> list:
+        """获取用户当前有效buff"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        c.execute('SELECT buff_type, buff_value, buff_desc FROM user_buffs WHERE user_id=? AND (expires_at IS NULL OR expires_at > ?)', (user_id, now))
+        buffs = c.fetchall()
+        conn.close()
+        return buffs
+
+    def _take_adventure_buffs(self, user_id: str) -> dict:
+        """取出一次冒险药水效果，并从待生效列表中移除。"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        c.execute('DELETE FROM user_buffs WHERE user_id=? AND expires_at IS NOT NULL AND expires_at <= ?', (user_id, now))
+        c.execute('SELECT id, buff_type, buff_value, buff_desc FROM user_buffs WHERE user_id=? AND (expires_at IS NULL OR expires_at > ?)', (user_id, now))
+        rows = c.fetchall()
+        buff_totals = {}
+        descs = []
+        used_ids = []
+        for buff_id, buff_type, buff_value, buff_desc in rows:
+            if buff_type in ('exp_bonus', 'rare_bonus', 'danger_reduce'):
+                buff_totals[buff_type] = buff_totals.get(buff_type, 0) + float(buff_value or 0)
+                descs.append(buff_desc)
+                used_ids.append(buff_id)
+        if used_ids:
+            marks = ','.join('?' for _ in used_ids)
+            c.execute(f'DELETE FROM user_buffs WHERE id IN ({marks})', used_ids)
+        conn.commit()
+        conn.close()
+        if descs:
+            buff_totals['descs'] = descs
+        return buff_totals
+
+    def _add_buff(self, user_id: str, buff_type: str, buff_value: float, buff_desc: str, expires_at: str = None):
+        """添加buff"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('INSERT INTO user_buffs (user_id,buff_type,buff_value,buff_desc,expires_at) VALUES (?,?,?,?,?)', (user_id, buff_type, buff_value, buff_desc, expires_at))
+        conn.commit()
+        conn.close()
+
+    def craft(self, user_id: str, group_id: str, recipe_name: str) -> dict:
+        """制药/锻造核心逻辑"""
+        user = self._get_user_data(user_id, group_id)
+        prof = user.get('profession', 'none')
+        prof_level = user.get('profession_level', 1)
+
+        # 检查职业
+        if prof == 'none':
+            return {'success': False, 'msg': '❌ 你尚未转职！\n💡 `pw转职 [职业名]` 选择职业'}
+
+        # 查找配方
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT * FROM recipes WHERE name=?', (recipe_name,))
+        recipe = c.fetchone()
+        conn.close()
+
+        if not recipe:
+            return {'success': False, 'msg': f'❌ 找不到配方 `{recipe_name}`\n💡 `pw制药配方` 或 `pw锻造配方` 查看可制作列表'}
+
+        rid, rname, rprof, rplv, mats_json, pid, pqty, base_rate, rdesc = recipe
+
+        # 检查职业匹配
+        if rprof != prof:
+            prof_name_map = {'gatherer': '采集师', 'alchemist': '制药师', 'blacksmith': '锻造师'}
+            need_prof = prof_name_map.get(rprof, rprof)
+            return {'success': False, 'msg': f'❌ `{rname}` 是 **{need_prof}** 专属配方！\n你当前是 {prof_name_map.get(prof, prof)}，无法制作。'}
+
+        # 检查职业等级
+        if prof_level < rplv:
+            return {'success': False, 'msg': f'❌ `{rname}` 需要 {PROF_CONFIG[rprof]["name"]} Lv.{rplv}！\n你当前 Lv.{prof_level}'}
+
+        # 检查材料
+        materials = json.loads(mats_json)
+        inventory = self._get_inventory(user_id, group_id)
+        missing = []
+        for mid, need_qty in materials.items():
+            mid = int(mid)
+            have = inventory.get(mid, 0)
+            if have < need_qty:
+                # 获取材料名称
+                conn = sqlite3.connect(self.db_path)
+                c = conn.cursor()
+                c.execute('SELECT name FROM items WHERE id=?', (mid,))
+                mname = c.fetchone()
+                conn.close()
+                mname = mname[0] if mname else f'物品{mid}'
+                missing.append(f'{mname} x{need_qty}（有{have}）')
+        if missing:
+            return {'success': False, 'msg': '❌ 材料不足！\n' + '\n'.join([f'  • {m}' for m in missing]) + '\n\n💡 `pw背包` 查看持有材料'}
+
+        # 计算成功率
+        bonus = self.get_craft_bonus(user_id, prof)
+        success_rate = base_rate + bonus.get('success_rate', 0)
+        # 装备加成
+        eqs = self._get_user_equipments(user_id)
+        for eq_id, eq_qty in eqs:
+            if eq_id == 114:  # 大师工具箱
+                success_rate += 10
+        success_rate = min(95, success_rate)
+
+        # 扣除材料
+        if not self._remove_items(user_id, group_id, {int(k): v for k, v in materials.items()}):
+            return {'success': False, 'msg': '❌ 材料扣除失败'}
+
+        # 判定成败
+        roll = random.randint(1, 100)
+        if roll <= success_rate:
+            # 成功
+            self._add_item(user_id, group_id, pid, pqty)
+            # 加职业经验
+            exp_gain = random.randint(5, 15) + prof_level * 2
+            prof_result = self._add_profession_exp(user_id, exp_gain)
+            # 获取产物信息
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute('SELECT name, rarity, item_type, desc FROM items WHERE id=?', (pid,))
+            prod = c.fetchone()
+            conn.close()
+            if not prod:
+                return {'success': True, 'msg': f"✅ **制作成功！**\n🎭 职业经验 +{exp_gain}\n⚠️ 产物信息缺失（id={pid}）"}
+            pname, prarity, ptype, pdesc = prod
+            rarity_emoji = {'common': '⚪', 'rare': '🔵', 'epic': '🟣'}
+            emoji = rarity_emoji.get(prarity, '⚪')
+            msg = f"✅ **制作成功！**\n"
+            msg += f"{emoji} {pname} x{pqty}\n"
+            msg += f"📖 {pdesc}\n"
+            msg += f"🎭 职业经验 +{exp_gain}\n"
+            if prof_result.get('leveled_up'):
+                titles = {1: '初级', 2: '资深', 3: '大师'}
+                pt = titles.get(prof_result['new_level'], '大师')
+                msg += f"🎉 **职业升级！** {PROF_CONFIG[prof]['name']} Lv.{prof_result['new_level']}（{pt}）\n"
+            msg += f"\n📊 成功率：{success_rate}%（判定 {roll}）"
+            return {'success': True, 'msg': msg}
+        else:
+            # 失败
+            exp_gain = random.randint(1, 5)
+            prof_result = self._add_profession_exp(user_id, exp_gain)
+            msg = f"❌ **制作失败...**\n"
+            msg += f"🎭 职业经验 +{exp_gain}（失败也有成长）\n"
+            if prof_result.get('leveled_up'):
+                titles = {1: '初级', 2: '资深', 3: '大师'}
+                pt = titles.get(prof_result['new_level'], '大师')
+                msg += f"🎉 **职业升级！** {PROF_CONFIG[prof]['name']} Lv.{prof_result['new_level']}（{pt}）\n"
+            msg += f"\n📊 成功率：{success_rate}%（判定 {roll}）\n"
+            msg += f"💡 提升职业等级或装备「大师工具箱」可提高成功率"
+            return {'success': False, 'msg': msg}
+
+    def get_recipes(self, user_id: str, group_id: str) -> dict:
+        """获取当前职业可制作的配方列表"""
+        user = self._get_user_data(user_id, group_id)
+        prof = user.get('profession', 'none')
+        prof_level = user.get('profession_level', 1)
+
+        if prof == 'none':
+            return {'success': False, 'msg': '❌ 你尚未转职！\n💡 `pw转职 [职业名]` 选择职业'}
+
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT * FROM recipes WHERE profession=? ORDER BY profession_level, id', (prof,))
+        recipes = c.fetchall()
+        conn.close()
+
+        if not recipes:
+            return {'success': True, 'msg': '暂无可用配方'}
+
+        prof_name = PROF_CONFIG[prof]['name']
+        msg = f"🎭 **{prof_name} 配方列表**（Lv.{prof_level}）\n\n"
+        inventory = self._get_inventory(user_id, group_id)
+        bonus = self.get_craft_bonus(user_id, prof)
+
+        for rid, rname, rprof, rplv, mats_json, pid, pqty, base_rate, rdesc in recipes:
+            status = '🔓' if prof_level >= rplv else '🔒'
+            rate = min(95, base_rate + bonus.get('success_rate', 0))
+            # 检查材料
+            mats = json.loads(mats_json)
+            can_make = True
+            mat_strs = []
+            for mid, need in mats.items():
+                mid = int(mid)
+                have = inventory.get(mid, 0)
+                conn = sqlite3.connect(self.db_path)
+                c = conn.cursor()
+                c.execute('SELECT name FROM items WHERE id=?', (mid,))
+                mname = c.fetchone()
+                conn.close()
+                mname = mname[0] if mname else f'物品{mid}'
+                mat_strs.append(f'{mname}x{need}({have})')
+                if have < need:
+                    can_make = False
+            msg += f"{status} **{rname}** [Lv.{rplv}] 成功率{rate}%\n"
+            msg += f"   📦 材料：{' | '.join(mat_strs)}\n"
+            msg += f"   📖 {rdesc}\n"
+            if can_make and prof_level >= rplv:
+                msg += f"   💡 `pw{'制药' if prof == 'alchemist' else '锻造'} {rname}`\n"
+            msg += "\n"
+        return {'success': True, 'msg': msg}
+
+    def use_item(self, user_id: str, group_id: str, item_name: str) -> dict:
+        """使用消耗品（药水等）"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT id, name, item_type, desc FROM items WHERE name=?', (item_name,))
+        item = c.fetchone()
+        if not item:
+            conn.close()
+            return {'success': False, 'msg': f'❌ 找不到物品 `{item_name}`'}
+        iid, iname, itype, idesc = item
+        conn.close()
+
+        if itype != 'consumable':
+            return {'success': False, 'msg': f'❌ `{item_name}` 不是消耗品，不能使用\n💡 装备用 `pw装备 {item_name}` 穿戴'}
+
+        product_effect = None
+        for product in CRAFT_PRODUCTS:
+            if product[0] == iid:
+                product_effect = product
+                break
+        if not product_effect:
+            return {'success': False, 'msg': '❌ 该物品无法使用'}
+
+        # 检查背包（优先商城背包）
+        has_item = False
+        if self.plugin:
+            import asyncio
+            try:
+                inv = asyncio.get_event_loop().run_until_complete(self.plugin._get_inventory(user_id))
+                has_count = sum(1 for it in inv if it.get("name") == item_name)
+                has_item = has_count > 0
+            except Exception:
+                has_item = False
+        if not has_item:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute('SELECT quantity FROM inventory WHERE user_id=? AND group_id=? AND item_id=?', (user_id, group_id or "", iid))
+            row = c.fetchone()
+            conn.close()
+            if not row or row[0] <= 0:
+                return {'success': False, 'msg': f'❌ 你没有 `{item_name}`'}
+
+        # 扣除物品（优先商城背包）
+        if self.plugin and has_item:
+            import asyncio
+            try:
+                inv = asyncio.get_event_loop().run_until_complete(self.plugin._get_inventory(user_id))
+                removed = False
+                new_inv = []
+                for it in inv:
+                    if not removed and it.get("name") == item_name:
+                        removed = True
+                    else:
+                        new_inv.append(it)
+                asyncio.get_event_loop().run_until_complete(self.plugin._save_inventory(user_id, new_inv))
+            except Exception:
+                pass
+        else:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute('UPDATE inventory SET quantity=quantity-1 WHERE user_id=? AND group_id=? AND item_id=?', (user_id, group_id or "", iid))
+            c.execute('DELETE FROM inventory WHERE user_id=? AND group_id=? AND item_id=? AND quantity<=0', (user_id, group_id or "", iid))
+            conn.commit()
+            conn.close()
+
+        # 查找产物效果
+        pid, pname, prarity, price, ptype, effect, val, pdesc, hp_b, atk_b, def_b = product_effect
+        msg = f"✅ 使用了 **{iname}**\n"
+        if effect == 'stamina':
+            new_st = min(100, self._recover_stamina(user_id) + val)
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute('UPDATE user_levels SET stamina=? WHERE user_id=?', (new_st, user_id))
+            conn.commit()
+            conn.close()
+            msg += f"⚡ 体力恢复 +{val}！当前 {new_st}/100"
+        elif effect == 'exp_bonus':
+            expires = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+            self._add_buff(user_id, 'exp_bonus', val, f'经验+{int(val*100)}%', expires)
+            msg += f"📖 下次冒险经验 +{int(val*100)}%（持续1小时内出发生效）"
+        elif effect == 'rare_bonus':
+            expires = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+            self._add_buff(user_id, 'rare_bonus', val, f'稀有率+{int(val*100)}%', expires)
+            msg += f"🔵 下次冒险稀有率 +{int(val*100)}%（持续1小时内出发生效）"
+        elif effect == 'danger_reduce':
+            expires = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+            self._add_buff(user_id, 'danger_reduce', val, f'危险率-{int(val*100)}%', expires)
+            msg += f"🛡️ 下次冒险危险率 -{int(val*100)}%（持续1小时内出发生效）"
+        else:
+            msg += f"📖 {idesc}"
+        return {'success': True, 'msg': msg}
+
+    def get_inventory_list(self, user_id: str, group_id: str) -> str:
+        """查看背包"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT i.id, i.name, i.rarity, i.item_type, inv.quantity FROM inventory inv JOIN items i ON inv.item_id=i.id WHERE inv.user_id=? AND inv.group_id=? AND inv.quantity>0 ORDER BY i.item_type, i.rarity DESC', (user_id, group_id or ""))
+        rows = c.fetchall()
+        conn.close()
+        if not rows:
+            return "🎒 冒险背包空空如也\n💡 `pw出发冒险` 去采集材料吧"
+        rarity_emoji = {'common': '⚪', 'rare': '🔵', 'epic': '🟣', 'legendary': '🟡'}
+        type_emoji = {'material': '🌿', 'consumable': '🧪', 'equipment': '⚔️', 'breakthrough': '🔮'}
+        msg = "🎒 **冒险背包**\n\n"
+        current_type = None
+        for iid, name, rarity, itype, qty in rows:
+            if itype != current_type:
+                current_type = itype
+                tname = {'material': '🌿 材料', 'consumable': '🧪 消耗品', 'equipment': '⚔️ 装备', 'breakthrough': '🔮 突破材料'}.get(itype, itype)
+                msg += f"{tname}：\n"
+            emoji = rarity_emoji.get(rarity, '⚪')
+            temoji = type_emoji.get(itype, '')
+            if itype == 'consumable':
+                msg += f"  {emoji} {name} x{qty}  💡 `pw使用 {name}`\n"
+            elif itype == 'equipment':
+                msg += f"  {emoji} {name} x{qty}（已装备）\n"
+            else:
+                msg += f"  {emoji} {name} x{qty}\n"
+        return msg
+
+    def get_introduction(self, user_id: str, group_id: str) -> str:
+        """冒险系统介绍"""
+        user = self._get_user_data(user_id, group_id)
+        prof = user.get('profession', 'none')
+        prof_level = user.get('profession_level', 1)
+        level = user.get('level', 1)
+
+        prof_name_map = {'gatherer': '采集师', 'alchemist': '制药师', 'blacksmith': '锻造师', 'none': '无'}
+        prof_name = prof_name_map.get(prof, '无')
+
+        msg = "📖 **冒险系统介绍**\n"
+        msg += "━━━━━━━━━━━━━━\n\n"
+
+        msg += "🎮 **基础玩法**\n"
+        msg += "1️⃣ `pw出发冒险 [地区名]` — 开始1小时冒险\n"
+        msg += "2️⃣ `pw查看收获` — 实时查看收益或结束结算\n"
+        msg += "3️⃣ `pw结束冒险` — 提前返回（立即结算）\n"
+        msg += "4️⃣ `pw背包` — 查看采集到的材料\n\n"
+
+        msg += "⚡ **体力系统**\n"
+        msg += "• 上限100点，每次冒险消耗20点\n"
+        msg += "• 每5分钟恢复1点\n"
+        msg += "• `pw购买体力` — 100积分买10点\n\n"
+
+        msg += "📈 **等级系统**（Lv.1 ~ Lv.100）\n"
+        msg += "• 冒险获取经验升级\n"
+        msg += "• 每10级需要突破：`pw突破` 提交材料\n"
+        msg += "• 满级100级可前往任何地区👑\n\n"
+
+        msg += "🎭 **职业系统**（10级解锁）\n"
+        msg += "• `pw转职 [职业名]` — 选择职业（首次500积分，切换1000）\n"
+        msg += "  🌿 采集师 — 触发率↑ 空手率↓ 收获数量↑\n"
+        msg += "  ⚗️ 制药师 — 制作药水/buff药剂\n"
+        msg += "  ⚒️ 锻造师 — 制作装备/工具\n"
+        msg += "• 职业等级：初级→资深→大师（Lv.1~3）\n\n"
+
+        msg += "⚗️ **制药师技能**\n"
+        msg += "• `pw制药配方` — 查看可制药水\n"
+        msg += "• `pw制药 [药水名]` — 制作（消耗材料）\n"
+        msg += "• 药水：体力恢复 / 经验加成 / 稀有率加成 / 危险减免\n"
+        msg += "• `pw使用 [药水名]` — 使用消耗品\n\n"
+
+        msg += "⚒️ **锻造师技能**\n"
+        msg += "• `pw锻造配方` — 查看可锻造物\n"
+        msg += "• `pw锻造 [物品名]` — 制作（消耗材料）\n"
+        msg += "• 装备：经验加成 / 收获加成 / 危险减免 / 史诗率加成\n"
+        msg += "• 装备后永久生效，无需重复制作\n\n"
+
+        msg += "🎒 **物品品质**\n"
+        msg += "⚪ 普通 → 🔵 稀有 → 🟣 史诗\n"
+        msg += "• 材料：用于制作/突破\n"
+        msg += "• 消耗品：药水类，用完就没了\n"
+        msg += "• 装备：永久生效，可叠加多个\n"
+        msg += "• 突破材料：每10级突破必需\n\n"
+
+        msg += "📊 **我的状态**\n"
+        msg += f"📈 等级：Lv.{level}\n"
+        msg += f"🎭 职业：{prof_name}"
+        if prof != 'none':
+            titles = {1: '初级', 2: '资深', 3: '大师'}
+            pt = titles.get(prof_level, '初级')
+            msg += f" Lv.{prof_level}（{pt}）"
+        msg += "\n\n"
+
+        msg += "💡 **快速开始**\n"
+        msg += "`pw出发冒险` → 选地区 → 等1小时 → `pw查看收获`\n"
+        msg += "10级后 `pw转职 采集师 确认` 开启职业玩法！"
+        return msg
+
+    # ==================== 装备系统 ====================
+    def _get_equipment_stats(self, user_id: str) -> dict:
+        """获取装备提供的属性加成"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT item_id FROM user_equipments WHERE user_id=?', (user_id,))
+        eqs = c.fetchall()
+        conn.close()
+
+        bonus_hp = 0
+        bonus_atk = 0
+        bonus_def = 0
+        bonus_exp = 0
+        bonus_qty = 0
+        bonus_danger = 0
+        bonus_epic = 0
+        bonus_craft = 0
+
+        for (eid,) in eqs:
+            for pid, pname, prarity, price, ptype, effect, val, pdesc, hp_b, atk_b, def_b in CRAFT_PRODUCTS:
+                if pid == eid:
+                    bonus_hp += hp_b
+                    bonus_atk += atk_b
+                    bonus_def += def_b
+                    if effect == 'exp_bonus':
+                        bonus_exp += val
+                    elif effect == 'qty_bonus':
+                        bonus_qty += val
+                    elif effect == 'danger_reduce':
+                        bonus_danger += val
+                    elif effect == 'epic_bonus':
+                        bonus_epic += val
+                    elif effect == 'craft_bonus':
+                        bonus_craft += val
+                    break
+
+        return {
+            'hp': bonus_hp, 'attack': bonus_atk, 'defense': bonus_def,
+            'exp_rate': bonus_exp, 'qty_bonus': bonus_qty,
+            'danger_reduce': bonus_danger, 'epic_bonus': bonus_epic,
+            'craft_bonus': bonus_craft
+        }
+
+    def equip_item(self, user_id: str, group_id: str, item_name: str) -> dict:
+        """装备物品"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT id, name, item_type, desc FROM items WHERE name=?', (item_name,))
+        item = c.fetchone()
+        if not item:
+            conn.close()
+            return {'success': False, 'msg': f'❌ 找不到物品 `{item_name}`'}
+        iid, iname, itype, idesc = item
+        conn.close()
+
+        if itype != 'equipment':
+            return {'success': False, 'msg': f'❌ `{item_name}` 不是装备，无法穿戴'}
+
+        # 检查背包（优先商城背包）
+        has_item = False
+        if self.plugin:
+            import asyncio
+            try:
+                inv = asyncio.get_event_loop().run_until_complete(self.plugin._get_inventory(user_id))
+                has_count = sum(1 for it in inv if it.get("name") == item_name)
+                has_item = has_count > 0
+            except Exception:
+                has_item = False
+        if not has_item:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute('SELECT quantity FROM inventory WHERE user_id=? AND group_id=? AND item_id=?', (user_id, group_id or "", iid))
+            row = c.fetchone()
+            conn.close()
+            if not row or row[0] <= 0:
+                return {'success': False, 'msg': f'❌ 你没有 `{item_name}`'}
+
+        # 检查是否已装备
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT item_id FROM user_equipments WHERE user_id=?', (user_id,))
+        existing = c.fetchall()
+        if existing and any(e[0] == iid for e in existing):
+            conn.close()
+            return {'success': False, 'msg': f'❌ `{item_name}` 已经装备了'}
+
+        # 装备（最多5件）
+        if len(existing) >= 5:
+            conn.close()
+            return {'success': False, 'msg': '❌ 装备栏已满（最多5件）\n💡 `pw卸下 [装备名]` 腾出位置'}
+
+        c.execute('INSERT INTO user_equipments (user_id, item_id) VALUES (?,?)', (user_id, iid))
+        conn.commit()
+        conn.close()
+
+        # 获取装备属性
+        for pid, pname, prarity, price, ptype, effect, val, pdesc, hp_b, atk_b, def_b in CRAFT_PRODUCTS:
+            if pid == iid:
+                msg = f"✅ **装备成功！**\n"
+                msg += f"⚔️ {iname}\n"
+                if hp_b > 0:
+                    msg += f"❤️ HP +{hp_b}\n"
+                if atk_b > 0:
+                    msg += f"⚔️ 攻击 +{atk_b}\n"
+                if def_b > 0:
+                    msg += f"🛡️ 防御 +{def_b}\n"
+                msg += f"📖 {idesc}"
+                return {'success': True, 'msg': msg}
+        return {'success': True, 'msg': f'✅ 装备了 {iname}'}
+
+    def unequip_item(self, user_id: str, item_name: str) -> dict:
+        """卸下装备"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT id, name FROM items WHERE name=?', (item_name,))
+        item = c.fetchone()
+        if not item:
+            conn.close()
+            return {'success': False, 'msg': f'❌ 找不到装备 `{item_name}`'}
+        iid, iname = item
+        c.execute('DELETE FROM user_equipments WHERE user_id=? AND item_id=?', (user_id, iid))
+        if c.rowcount == 0:
+            conn.close()
+            return {'success': False, 'msg': f'❌ 你没有装备 `{item_name}`'}
+        conn.commit()
+        conn.close()
+        return {'success': True, 'msg': f'✅ 已卸下 **{iname}**'}
+
+    # ==================== 角色面板 ====================
+    def get_character_panel(self, user_id: str, group_id: str) -> str:
+        """角色面板"""
+        user = self._get_user_data(user_id, group_id)
+        level = user.get('level', 1)
+        exp = user.get('exp', 0)
+        hp = user.get('hp', 100)
+        max_hp = user.get('max_hp', 100)
+        attack = user.get('attack', 10)
+        defense = user.get('defense', 5)
+        prof = user.get('profession', 'none')
+        prof_level = user.get('profession_level', 1)
+        profession_exp = user.get('profession_exp', 0)
+        stamina = self._recover_stamina(user_id)
+
+        # 获取装备加成
+        eq_stats = self._get_equipment_stats(user_id)
+        total_hp = max_hp + eq_stats['hp']
+        total_atk = attack + eq_stats['attack']
+        total_def = defense + eq_stats['defense']
+
+        # 获取等级称号
+        config = self._get_level_config(level)
+        title = config['title'] if config else '冒险者'
+
+        # HP 进度条
+        hp_bar_len = 10
+        hp_filled = int((hp / max(1, total_hp)) * hp_bar_len)
+        hp_bar = '█' * hp_filled + '░' * (hp_bar_len - hp_filled)
+
+        # 体力进度条
+        st_bar_len = 10
+        st_filled = int((stamina / 100) * st_bar_len)
+        st_bar = '█' * st_filled + '░' * (st_bar_len - st_filled)
+
+        # 经验进度条
+        exp_needed = config['exp_needed'] if config else 100
+        exp_bar_len = 10
+        exp_filled = int((exp / max(1, exp_needed)) * exp_bar_len)
+        exp_bar = '█' * exp_filled + '░' * (exp_bar_len - exp_filled)
+
+        msg = f"🎴 **{title} 的角色面板**\n"
+        msg += "━━━━━━━━━━━━━━\n\n"
+
+        # 基础信息
+        msg += f"📈 等级：Lv.{level} {title}\n"
+        msg += f"📖 经验：[{exp_bar}] {exp}/{exp_needed}\n\n"
+
+        # 血量
+        msg += f"❤️ 血量：[{hp_bar}] {hp}/{total_hp}"
+        if eq_stats['hp'] > 0:
+            msg += f"（基础{max_hp} + 装备+{eq_stats['hp']}）"
+        msg += "\n"
+
+        # 攻击
+        msg += f"⚔️ 攻击：{total_atk}"
+        if eq_stats['attack'] > 0:
+            msg += f"（基础{attack} + 装备+{eq_stats['attack']}）"
+        msg += "\n"
+
+        # 防御
+        msg += f"🛡️ 防御：{total_def}"
+        if eq_stats['defense'] > 0:
+            msg += f"（基础{defense} + 装备+{eq_stats['defense']}）"
+        msg += "\n\n"
+
+        # 体力
+        msg += f"⚡ 体力：[{st_bar}] {stamina}/100\n"
+        sinfo = self._get_stamina_info(user_id)
+        if sinfo['stamina'] < 100:
+            msg += f"⏱️ 下次恢复：{sinfo['next_recover']}\n"
+        msg += "\n"
+
+        # 职业
+        if prof != 'none':
+            prof_name = PROF_CONFIG.get(prof, {}).get('name', prof)
+            titles = {1: '初级', 2: '资深', 3: '大师'}
+            pt = titles.get(prof_level, '初级')
+            msg += f"🎭 职业：{pt}{prof_name} Lv.{prof_level}\n"
+            msg += f"📖 职业经验：{profession_exp}"
+            if prof_level < 3:
+                need = PROF_LEVEL_REQ[prof_level + 1]
+                msg += f" / {need}（还需 {need - profession_exp}）"
+            else:
+                msg += "（已满级）"
+            msg += "\n\n"
+
+        # 装备栏
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT e.item_id, i.name, i.rarity FROM user_equipments e JOIN items i ON e.item_id=i.id WHERE e.user_id=?', (user_id,))
+        eqs = c.fetchall()
+        conn.close()
+
+        if eqs:
+            rarity_emoji = {'common': '⚪', 'rare': '🔵', 'epic': '🟣', 'legendary': '🟡'}
+            msg += "⚔️ **已装备**（{}/5）：\n".format(len(eqs))
+            for eid, ename, erarity in eqs:
+                emoji = rarity_emoji.get(erarity, '⚪')
+                msg += f"  {emoji} {ename}\n"
+            msg += "\n"
+        else:
+            msg += "⚔️ **装备栏**：空（0/5）\n"
+            msg += "💡 `pw锻造` 制作装备，然后 `pw装备 [装备名]`\n\n"
+
+        # 装备特效汇总
+        if any(v > 0 for v in [eq_stats['exp_rate'], eq_stats['qty_bonus'], eq_stats['danger_reduce'], eq_stats['epic_bonus'], eq_stats['craft_bonus']]):
+            msg += "✨ **装备特效**：\n"
+            if eq_stats['exp_rate'] > 0:
+                msg += f"  📖 经验加成 +{int(eq_stats['exp_rate']*100)}%\n"
+            if eq_stats['qty_bonus'] > 0:
+                msg += f"  🎒 收获数量 +{eq_stats['qty_bonus']}\n"
+            if eq_stats['danger_reduce'] > 0:
+                msg += f"  🛡️ 危险减免 -{int(eq_stats['danger_reduce']*100)}%\n"
+            if eq_stats['epic_bonus'] > 0:
+                msg += f"  🟣 史诗掉率 +{int(eq_stats['epic_bonus']*100)}%\n"
+            if eq_stats['craft_bonus'] > 0:
+                msg += f"  ⚒️ 锻造成功率 +{int(eq_stats['craft_bonus']*100)}%\n"
+            msg += "\n"
+
+        # 当前冒险状态
+        if user.get('adventure_active') == 1:
+            start = datetime.strptime(user['adventure_start'], "%Y-%m-%d %H:%M:%S")
+            remain = max(0, 60 - int((datetime.now() - start).total_seconds() // 60))
+            region = self._get_region(user.get('adventure_region'))
+            rname = region['name'] if region else '未知'
+            msg += f"🗺️ **当前冒险**：{rname}\n"
+            msg += f"⏱️ 剩余 {remain} 分钟\n"
+            msg += f"💡 `pw查看收获` 查看收益\n"
+
+        msg += "\n💡 `pw冒险介绍` 查看完整玩法说明"
+        return msg
+
 
 @register("paywall", "洛蒂", "API 双维度收费插件", "4.2.1", "https://github.com/yourname/paywall")
 class PaywallPlugin(Star):
@@ -42,6 +1595,12 @@ class PaywallPlugin(Star):
         self.enabled = config.get("enabled", True)
         self.contact_group = config.get("contact_group", "")
         logger.info(f"[Paywall] 已加载 | 每条消息扣 {self.cost} 积分 | 签到 {self.sign_min}~{self.sign_max} 积分 | 商城税率 {self.tax_rate}% | 管理员免限额")
+        # 初始化冒险系统
+        import os
+        db_dir = os.path.dirname(os.path.abspath(__file__))
+        self.adv_db_path = os.path.join(db_dir, "adventure.db")
+        self.adventure = AdventureSystem(self.adv_db_path, plugin=self)
+
         # 在 __init__ 阶段就注册 WebUI API，保证热重载插件时路由也能注册成功
         # （on_astrbot_loaded 仅在 AstrBot 整体启动时触发一次，单插件重载未必重放）
         self._register_webui_api()
@@ -59,7 +1618,7 @@ class PaywallPlugin(Star):
     # ==================== 工具方法 ====================
 
     def _is_private(self, event: AstrMessageEvent) -> bool:
-        return event.is_private_chat() or not event.get_group_id()
+        return not event.get_group_id()
 
     def _get_billing_id(self, event: AstrMessageEvent) -> tuple:
         if self._is_private(event):
@@ -425,6 +1984,31 @@ class PaywallPlugin(Star):
             pass
         return []
 
+    def _parse_shop_config(self, item_str: str) -> tuple[str, float] | None:
+        parts = item_str.split(":")
+        if len(parts) < 2:
+            return None
+        name = parts[0].strip()
+        if not name:
+            return None
+        try:
+            price = float(parts[1].strip())
+        except ValueError:
+            return None
+        return name, price
+
+    async def _get_existing_shop_names(self, index_key: str, getter) -> set:
+        names = set()
+        raw = await self.get_kv_data(index_key, None)
+        if raw is None or raw == "" or raw == "null":
+            return names
+        idx = json.loads(raw) if isinstance(raw, str) else raw
+        for item_id in idx:
+            item = await getter(item_id)
+            if item and item.get("stock", 0) > 0:
+                names.add(item.get("name", ""))
+        return names
+
     def _parse_args(self, event: AstrMessageEvent, cmd_name: str) -> list:
         text = event.message_str.strip()
         for prefix in [f'/{cmd_name}', cmd_name]:
@@ -436,31 +2020,36 @@ class PaywallPlugin(Star):
     # ==================== LLM 拦截与扣费 ====================
 
     async def _init_default_shop(self):
-        """初始化默认商品到商城"""
+        """初始化或补齐默认商品到商城"""
         try:
-            init_flag = await self.get_kv_data("paywall_shop_initialized", None)
-            if init_flag:
-                return
+            general_names = await self._get_existing_shop_names(self._shop_index_key(), self._get_shop_item)
+            item_names = await self._get_existing_shop_names(self._item_shop_index_key(), self._get_item_shop_item)
+            general_count = 0
+            item_count = 0
 
             for item_str in self.general_items:
-                parts = item_str.split(":")
-                if len(parts) >= 2:
-                    name = parts[0].strip()
-                    price = float(parts[1].strip())
+                parsed = self._parse_shop_config(item_str)
+                if parsed:
+                    name, price = parsed
+                    if name in general_names:
+                        continue
                     item_id = self._gen_item_id()
                     item = {
                         "id": item_id, "name": name, "price": price, "original_price": price,
                         "stock": 999, "seller": "system", "seller_name": "系统商店",
-                        "created_at": datetime.now().isoformat(), "discount": 1.0, "shop_type": "杂货"
+                        "created_at": datetime.now().isoformat(), "discount": 1.0, "shop_type": "百货"
                     }
                     await self._save_shop_item(item_id, item)
                     await self._add_shop_index(item_id)
+                    general_names.add(name)
+                    general_count += 1
 
             for item_str in self.items:
-                parts = item_str.split(":")
-                if len(parts) >= 2:
-                    name = parts[0].strip()
-                    price = float(parts[1].strip())
+                parsed = self._parse_shop_config(item_str)
+                if parsed:
+                    name, price = parsed
+                    if name in item_names:
+                        continue
                     item_id = self._gen_item_id()
                     item = {
                         "id": item_id, "name": name, "price": price, "original_price": price,
@@ -469,9 +2058,12 @@ class PaywallPlugin(Star):
                     }
                     await self._save_item_shop_item(item_id, item)
                     await self._add_item_shop_index(item_id)
+                    item_names.add(name)
+                    item_count += 1
 
             await self.put_kv_data("paywall_shop_initialized", "true")
-            logger.info(f"[Paywall] 默认商品已自动上架：百货{len(self.general_items)}件，道具{len(self.items)}件")
+            if general_count or item_count:
+                logger.info(f"[Paywall] 默认商品已自动补齐：百货{general_count}件，道具{item_count}件")
         except Exception as e:
             logger.warning(f"[Paywall] 初始化默认商城失败: {e}")
 
@@ -688,6 +2280,7 @@ class PaywallPlugin(Star):
     async def on_astrbot_loaded(self):
         """AstrBot 冷启动完成后再注册一次 WebUI API（兜底）"""
         self._register_webui_api()
+        self._start_adventure_checker()
 
     @filter.on_llm_response()
     async def deduct_after(self, event: AstrMessageEvent, resp: LLMResponse):
@@ -747,6 +2340,49 @@ class PaywallPlugin(Star):
         except Exception as e:
             logger.debug(f"[Paywall] 消息监听异常: {e}")
 
+    def _start_adventure_checker(self):
+        """启动后台冒险结算检查器。"""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                self._adventure_checker_task = asyncio.ensure_future(self._adventure_check_loop())
+        except Exception:
+            pass
+
+    async def _adventure_check_loop(self):
+        """定时检查并自动结算过期冒险。"""
+        await asyncio.sleep(30)
+        while True:
+            try:
+                await self._check_expired_adventures()
+            except Exception as e:
+                logger.error(f"冒险自动结算异常: {e}")
+            await asyncio.sleep(60)
+
+    async def _check_expired_adventures(self):
+        """查找并结算已过期的冒险。"""
+        conn = sqlite3.connect(self.adv_db_path)
+        c = conn.cursor()
+        c.execute("""
+            SELECT user_id, group_id FROM user_levels
+            WHERE adventure_active=1
+            AND adventure_start IS NOT NULL
+            AND datetime(adventure_start, '+1 hour') <= datetime('now', 'localtime')
+        """)
+        rows = c.fetchall()
+        conn.close()
+        if not rows:
+            return
+        for user_id, group_id in rows:
+            if not group_id: group_id = ""
+            try:
+                result = self.adventure._calc_adventure_loot(user_id, group_id, force_end=True)
+                if result:
+                    await self.adventure._sync_adventure_items_to_kv(user_id, result)
+                    logger.info(f"[Paywall] 自动结算冒险: user={user_id}, items={list(result.get('new_items', {}).keys())}")
+            except Exception as e:
+                logger.error(f"[Paywall] 自动结算用户 {user_id} 冒险失败: {e}")
     # ==================== 余额查询 ====================
 
     @filter.command("pw余额")
@@ -926,15 +2562,15 @@ class PaywallPlugin(Star):
     async def list_item(self, event: AstrMessageEvent):
         parts = self._parse_args(event, "pw上架")
         if len(parts) < 1:
-            yield event.plain_result("❌ 用法: /pw上架 商品名 [数量]\n道具: /pw上架 魔法药水 5\n杂货: /pw上架 自定义商品 100 5")
+            yield event.plain_result("❌ 用法: /pw上架 商品名 [数量]\n道具: /pw上架 蘑菇 5\n百货: /pw上架 自定义商品 100 5")
             return
 
         name = parts[0]
         seller_id = str(event.get_sender_id())
 
-        # 判断是道具还是杂货：检查物品在哪个配置列表中
+        # 判断是道具还是百货：检查物品在哪个配置列表中
         item_config = None
-        shop_type = "杂货"  # 默认百货商城
+        shop_type = "百货"  # 默认百货商城
 
         # 先检查 items（道具列表）
         for cfg in self.items:
@@ -950,7 +2586,7 @@ class PaywallPlugin(Star):
                 cfg_parts = cfg.split(":")
                 if cfg_parts[0].strip() == name:
                     item_config = cfg
-                    shop_type = "杂货"  # 在杂物列表中，上架到百货商城
+                    shop_type = "百货"  # 在百货列表中，上架到百货商城
                     break
 
         is_item = item_config is not None
@@ -964,11 +2600,10 @@ class PaywallPlugin(Star):
                 return
             cfg_parts = item_config.split(":")
             price = float(cfg_parts[1].strip()) if len(cfg_parts) > 1 else 100
-            shop_type = "道具"
         else:
-            # 杂货：需要价格参数
+            # 百货：需要价格参数
             if len(parts) < 2:
-                yield event.plain_result(f"❌ 「{name}」不是道具商城物品，上架杂货需要指定价格。\n格式: /pw上架 商品名 价格 [数量]")
+                yield event.plain_result(f"❌ 「{name}」不是道具商城物品，上架百货需要指定价格。\n格式: /pw上架 商品名 价格 [数量]")
                 return
             try:
                 price = float(parts[1])
@@ -976,7 +2611,7 @@ class PaywallPlugin(Star):
             except ValueError:
                 yield event.plain_result("❌ 价格必须是数字，数量必须是整数")
                 return
-            shop_type = "杂货"
+            shop_type = "百货"
 
         if price <= 0:
             yield event.plain_result("❌ 价格必须大于 0")
@@ -1111,7 +2746,7 @@ class PaywallPlugin(Star):
             if item and item.get("stock", 0) > 0:
                 discount = item.get("discount", 1.0)
                 price = item["price"] * discount
-                discount_tag = "" if discount >= 1.0 else f" [🔥{discount*10:.0f}折]"
+                discount_tag = "" if discount >= 1.0 else f" [🔥{discount*10:g}折]"
                 seller_name = item.get("seller_name", "")
                 if not seller_name:
                     seller_data = await self._get_data("user", item["seller"])
@@ -1141,7 +2776,7 @@ class PaywallPlugin(Star):
             if item and item.get("stock", 0) > 0:
                 discount = item.get("discount", 1.0)
                 price = item["price"] * discount
-                discount_tag = "" if discount >= 1.0 else f" [🔥{discount*10:.0f}折]"
+                discount_tag = "" if discount >= 1.0 else f" [🔥{discount*10:g}折]"
                 seller_name = item.get("seller_name", "")
                 if not seller_name:
                     seller_data = await self._get_data("user", item["seller"])
@@ -1182,7 +2817,7 @@ class PaywallPlugin(Star):
             # 按编号购买（精确购买单个商品）
             item_id = query.upper()
             item = await self._get_shop_item(item_id)
-            shop_type = "杂货"
+            shop_type = "百货"
 
             if item is None:
                 item = await self._get_item_shop_item(item_id)
@@ -1213,9 +2848,9 @@ class PaywallPlugin(Star):
                     item = await self._get_shop_item(item_id)
                     if item and item.get("stock", 0) > 0 and item.get("name") == query:
                         if item.get("seller") == "system":
-                            system_items.append((item_id, item, "杂货"))
+                            system_items.append((item_id, item, "百货"))
                         else:
-                            player_items.append((item_id, item, "杂货"))
+                            player_items.append((item_id, item, "百货"))
 
             # 再尝试道具商城
             item_idx_raw = await self.get_kv_data(self._item_shop_index_key(), None)
@@ -1482,7 +3117,7 @@ class PaywallPlugin(Star):
         except Exception as e:
             logger.warning(f"[Paywall] 私信通知卖家失败: {e}")
 
-        discount_msg = "" if discount >= 1.0 else f"（原价 {item['original_price']:.2f}，{discount*10:.0f}折）"
+        discount_msg = "" if discount >= 1.0 else f"（原价 {item['original_price']:.2f}，{discount*10:g}折）"
         return (
             f"✅ 购买成功！\n"
             f"商城: {shop_type}商城\n"
@@ -1531,7 +3166,7 @@ class PaywallPlugin(Star):
             if item and item.get("seller") == user_id and item.get("stock", 0) > 0:
                 discount = item.get("discount", 1.0)
                 price = item["price"] * discount
-                discount_tag = "" if discount >= 1.0 else f" [🔥{discount*10:.0f}折]"
+                discount_tag = "" if discount >= 1.0 else f" [🔥{discount*10:g}折]"
                 my_items.append(f"{item_id}: {item['name']} - {price:.2f}积分 (库存{item['stock']}){discount_tag}")
 
         if not my_items:
@@ -1554,20 +3189,32 @@ class PaywallPlugin(Star):
             items.append(f"{item['name']} ({item['source']} {item['date']})")
 
         body = "\n".join(items)
-        yield event.plain_result(f"🎒 我的背包 ({len(inventory)} 件)\n━━━━━━━━━━━━━━\n{body}\n━━━━━━━━━━━━━━")
+        yield event.plain_result(f"🎒 **背包物品** ({len(inventory)} 件)\n━━━━━━━━━━━━━━\n{body}\n━━━━━━━━━━━━━━")
     async def _show_inventory(self, event: AstrMessageEvent):
         user_id = str(event.get_sender_id())
-        inventory = await self._get_inventory(user_id)
-        if not inventory:
-            yield event.plain_result("📭 你的背包是空的")
+        group_id = event.get_group_id() or ""
+        kv_inv = await self._get_inventory(user_id)
+        adv_inv = self.adventure.get_inventory_list(user_id, group_id)
+
+        parts = []
+
+        if kv_inv:
+            items = []
+            for item in kv_inv[-30:]:
+                items.append(f"{item['name']} ({item['source']} {item['date']})")
+            parts.append(f"🎒 **背包物品** ({len(kv_inv)} 件)\n" + "\n".join(items))
+
+        if adv_inv and "空空如也" not in adv_inv:
+            parts.append(adv_inv)
+
+        if not parts:
+            if adv_inv:
+                yield event.plain_result(adv_inv)
+            else:
+                yield event.plain_result("📭 你的背包是空的")
             return
 
-        items = []
-        for item in inventory[-30:]:
-            items.append(f"{item['name']} ({item['source']} {item['date']})")
-
-        body = "\n".join(items)
-        yield event.plain_result(f"🎒 我的背包 ({len(inventory)} 件)\n━━━━━━━━━━━━━━\n{body}\n━━━━━━━━━━━━━━")
+        yield event.plain_result("\n".join(parts))
 
 
     @filter.command("pw出售")
@@ -1575,7 +3222,7 @@ class PaywallPlugin(Star):
         """把背包物品卖给系统，价格80%（按名称出售）"""
         parts = self._parse_args(event, "pw出售")
         if not parts:
-            yield event.plain_result("❌ 用法: /pw出售 物品名称 [数量]\n例如: /pw出售 魔法药水\n      /pw出售 魔法药水 5")
+            yield event.plain_result("❌ 用法: /pw出售 物品名称 [数量]\n例如: /pw出售 蘑菇\n      /pw出售 蘑菇 5")
             return
 
         item_name = parts[0]
@@ -1669,7 +3316,7 @@ class PaywallPlugin(Star):
 
         parts = self._parse_args(event, "pw打折")
         if len(parts) != 2:
-            yield event.plain_result("❌ 用法: /pw打折 商品编号 折扣\n例如: /pw打折 ITEM-AB12CD 0.8 (8折)")
+            yield event.plain_result("❌ 用法: /pw打折 商品编号/全部 折扣\n例如: /pw打折 ITEM-AB12CD 0.8 (8折) 或 /pw打折 全部 0.8 (全场8折)")
             return
 
         item_id = parts[0].strip().upper()
@@ -1681,6 +3328,37 @@ class PaywallPlugin(Star):
 
         if not (0.1 <= discount <= 1.0):
             yield event.plain_result("❌ 折扣必须在 0.1~1.0 之间")
+            return
+
+        
+        # 全部商品打折
+        if item_id == "全部":
+            count = 0
+            # 百货
+            idx_raw = await self.get_kv_data(self._shop_index_key(), None)
+            if idx_raw is not None and idx_raw != "" and idx_raw != "null":
+                idx = json.loads(idx_raw) if isinstance(idx_raw, str) else idx_raw
+                for sid in idx:
+                    item = await self._get_shop_item(sid)
+                    if item and item.get("stock", 0) > 0:
+                        item["discount"] = discount
+                        await self._save_shop_item(sid, item)
+                        count += 1
+            # 道具
+            idx_raw = await self.get_kv_data(self._item_shop_index_key(), None)
+            if idx_raw is not None and idx_raw != "" and idx_raw != "null":
+                idx = json.loads(idx_raw) if isinstance(idx_raw, str) else idx_raw
+                for sid in idx:
+                    item = await self._get_item_shop_item(sid)
+                    if item and item.get("stock", 0) > 0:
+                        item["discount"] = discount
+                        await self._save_item_shop_item(sid, item)
+                        count += 1
+            if count == 0:
+                yield event.plain_result("📭 商城没有商品")
+                return
+            logger.info(f"[Paywall] 管理员 {admin_id} 全部商品 {discount*10:g}折，共 {count} 件")
+            yield event.plain_result(f"✅ 全部商品打折设置成功！\n折扣: {discount*10:g}折\n影响商品: {count} 件")
             return
 
         item = await self._get_shop_item(item_id)
@@ -1698,11 +3376,11 @@ class PaywallPlugin(Star):
             await self._save_shop_item(item_id, item)
 
         new_price = item["price"] * discount
-        logger.info(f"[Paywall] 管理员 {admin_id} 给 {item_id} 设置 {discount*10:.0f}折")
+        logger.info(f"[Paywall] 管理员 {admin_id} 给 {item_id} 设置 {discount*10:g}折")
         yield event.plain_result(
             f"✅ 打折设置成功！\n"
             f"商品: {item['name']}\n"
-            f"折扣: {discount*10:.0f}折\n"
+            f"折扣: {discount*10:g}折\n"
             f"现价: {new_price:.2f} 积分 (原价 {item['original_price']:.2f})"
         )
 
@@ -1715,10 +3393,39 @@ class PaywallPlugin(Star):
 
         parts = self._parse_args(event, "pw取消打折")
         if not parts:
-            yield event.plain_result("❌ 用法: /pw取消打折 商品编号")
+            yield event.plain_result("❌ 用法: /pw取消打折 商品编号 或 /pw取消打折 全部")
             return
 
         item_id = parts[0].strip().upper()
+
+        # 全部取消
+        if item_id == "全部":
+            count = 0
+            # 百货
+            idx_raw = await self.get_kv_data(self._shop_index_key(), None)
+            if idx_raw is not None and idx_raw != "" and idx_raw != "null":
+                idx = json.loads(idx_raw) if isinstance(idx_raw, str) else idx_raw
+                for sid in idx:
+                    item = await self._get_shop_item(sid)
+                    if item and item.get("discount", 1.0) != 1.0:
+                        item["discount"] = 1.0
+                        await self._save_shop_item(sid, item)
+                        count += 1
+            # 道具
+            idx_raw = await self.get_kv_data(self._item_shop_index_key(), None)
+            if idx_raw is not None and idx_raw != "" and idx_raw != "null":
+                idx = json.loads(idx_raw) if isinstance(idx_raw, str) else idx_raw
+                for sid in idx:
+                    item = await self._get_item_shop_item(sid)
+                    if item and item.get("discount", 1.0) != 1.0:
+                        item["discount"] = 1.0
+                        await self._save_item_shop_item(sid, item)
+                        count += 1
+            logger.info(f"[Paywall] 管理员 {admin_id} 取消全部打折，共 {count} 件")
+            yield event.plain_result(f"✅ 已取消全部打折！\n共恢复 {count} 件商品原价")
+            return
+
+        # 单个取消
         item = await self._get_shop_item(item_id)
         shop_type = "百货"
         if item is None:
@@ -1735,56 +3442,7 @@ class PaywallPlugin(Star):
 
         logger.info(f"[Paywall] 管理员 {admin_id} 取消 {item_id} 打折")
         yield event.plain_result(f"✅ 已恢复原价！\n商品: {item['name']}\n价格: {item['price']:.2f} 积分")
-
-    @filter.command("pw全场打折")
-    async def discount_all(self, event: AstrMessageEvent):
-        admin_id = str(event.get_sender_id())
-        if not self._is_admin(admin_id):
-            yield event.plain_result("❌ 权限不足")
-            return
-
-        parts = self._parse_args(event, "pw全场打折")
-        if not parts:
-            yield event.plain_result("❌ 用法: /pw全场打折 折扣\n例如: /pw全场打折 0.8")
-            return
-
-        try:
-            discount = float(parts[0])
-        except ValueError:
-            yield event.plain_result("❌ 折扣必须是数字")
-            return
-
-        if not (0.1 <= discount <= 1.0):
-            yield event.plain_result("❌ 折扣必须在 0.1~1.0 之间")
-            return
-
-        count = 0
-        idx_raw = await self.get_kv_data(self._shop_index_key(), None)
-        if idx_raw is not None and idx_raw != "" and idx_raw != "null":
-            idx = json.loads(idx_raw) if isinstance(idx_raw, str) else idx_raw
-            for item_id in idx:
-                item = await self._get_shop_item(item_id)
-                if item and item.get("stock", 0) > 0:
-                    item["discount"] = discount
-                    await self._save_shop_item(item_id, item)
-                    count += 1
-        item_idx_raw = await self.get_kv_data(self._item_shop_index_key(), None)
-        if item_idx_raw is not None and item_idx_raw != "" and item_idx_raw != "null":
-            idx = json.loads(item_idx_raw) if isinstance(item_idx_raw, str) else item_idx_raw
-            for item_id in idx:
-                item = await self._get_item_shop_item(item_id)
-                if item and item.get("stock", 0) > 0:
-                    item["discount"] = discount
-                    await self._save_item_shop_item(item_id, item)
-                    count += 1
-        if count == 0:
-            yield event.plain_result("📭 商城没有商品")
-            return
-
-        logger.info(f"[Paywall] 管理员 {admin_id} 全场 {discount*10:.0f}折，共 {count} 件商品")
-        yield event.plain_result(f"✅ 全场打折设置成功！\n折扣: {discount*10:.0f}折\n影响商品: {count} 件")
-
-    # ==================== 管理员充值 ====================
+        # ==================== 管理员充值 ====================
 
     @filter.command("pw充值")
     async def recharge(self, event: AstrMessageEvent):
@@ -2833,6 +4491,23 @@ class PaywallPlugin(Star):
             f"/pw背包 - 查看背包\n"
             f"/pw出售 物品名称 [数量] - 出售背包物品给系统（80%价格）\n"
             f"/pw交易记录 - 查看交易记录\n"
+            f"【冒险系统】\n"
+            f"/pw冒险介绍 - 📖 查看冒险系统详细介绍\n"
+            f"/pw出发冒险 [地区名] - 开始冒险\n"
+            f"/pw查看收获 - 查看冒险收益\n"
+            f"/pw结束冒险 - 提前结束冒险\n"
+            f"/pw购买体力 - 100积分买10体力\n"
+            f"/pw突破 - 等级突破（需材料）\n"
+            f"/pw角色面板 - 查看角色状态\n"
+            f"/pw装备 [装备名] - 穿戴装备\n"
+            f"/pw卸下 [装备名] - 卸下装备\n"
+            f"/pw使用 [物品名] - 使用消耗品\n"
+            f"/pw转职 [职业名] [确认] - 选择职业（首次500，切换1000）\n"
+            f"  🌿 采集师 - 触发率↑ 空手率↓ 收获数量↑\n"
+            f"  ⚗️ 制药师 - 制作药水/buff药剂\n"
+            f"  ⚒️ 锻造师 - 制作装备/工具\n"
+            f"  ⚗️ 制药师专属: /pw制药配方 /pw制药 [药水名]\n"
+            f"  ⚒️ 锻造师专属: /pw锻造配方 /pw锻造 [物品名]\n"
             f"【银行系统】\n"
             f"/pw银行介绍 - 📖 查看银行系统详细介绍\n"
             f"/pw存款 金额 - 存款到银行\n"
@@ -2866,7 +4541,7 @@ class PaywallPlugin(Star):
             f"【打折活动】👑 管理员\n"
             f"/pw打折 编号 折扣\n"
             f"/pw取消打折 编号\n"
-            f"/pw全场打折 折扣\n"
+            f"/pw打折 全部 折扣\n"
             f"【其他】\n"
             f"/pw管理面板 - 👑 获取 WebUI 地址\n"
             f"/pw帮助 - 显示本帮助\n"
@@ -2898,7 +4573,7 @@ class PaywallPlugin(Star):
             f"【管理员】\n"
             f"/pw一键上架 [数量] - 批量上架\n"
             f"/pw打折 编号 折扣 - 单个打折\n"
-            f"/pw全场打折 折扣 - 全场打折"
+            f"/pw打折 全部 折扣 - 全场打折"
         )
         yield event.plain_result(text)
 
@@ -2993,3 +4668,267 @@ class PaywallPlugin(Star):
         )
         yield event.plain_result(text)
 
+    # ==================== 冒险系统指令 ====================
+
+    @filter.command("pw出发冒险")
+    async def cmd_adventure(self, event: AstrMessageEvent):
+        args = self._parse_args(event, "pw出发冒险")
+        user_id = event.get_sender_id()
+        group_id = event.get_group_id() or ""
+        user = self.adventure._get_user_data(user_id, group_id)
+        stamina = self.adventure._recover_stamina(user_id)
+        if not args:
+            conn = sqlite3.connect(self.adventure.db_path)
+            c = conn.cursor()
+            c.execute('SELECT id,name,min_level,max_level,cost,danger_rate,desc FROM regions ORDER BY min_level')
+            regions = c.fetchall()
+            conn.close()
+            is_max = user['level'] >= 100
+            current = self.adventure._get_region_by_level(user['level'])
+            sinfo = self.adventure._get_stamina_info(user_id)
+            bar_len = 10; filled = int((sinfo['stamina'] / sinfo['max']) * bar_len); bar = '█' * filled + '░' * (bar_len - filled)
+            msg = f"🗺️ **冒险地图** | "; msg += "👑 **满级冒险家**" if is_max else f"Lv.{user['level']}"
+
+            msg += "\n\n"
+            for rid, name, min_lv, max_lv, cost, danger, desc in regions:
+                if is_max: status, note = "👑", ""
+                elif user['level'] >= min_lv: status, note = "🔓", " ← 当前" if current and current['id'] == rid else ""
+                else: status, note = "🔒", f"（需{min_lv}级）"
+                msg += f"{status} {name}  [Lv.{min_lv}-{max_lv}]  危险{danger}%  ⚡{cost}{note}"
+                if status != "🔒": msg += f"   {desc}\n"
+            msg += "\n💡 用法：`pw出发冒险 [地区名]`（每次⚡20）"
+            if sinfo['stamina'] < 20: msg += "\n⚠️ 体力不足！`pw购买体力` 补充"
+            yield event.plain_result(msg); return
+        target = args[0]
+        conn = sqlite3.connect(self.adventure.db_path); c = conn.cursor()
+        c.execute('SELECT id,name,min_level,cost,danger_rate,desc FROM regions WHERE name LIKE ?', (f'%{target}%',))
+        region = c.fetchone()
+        if not region: conn.close(); yield event.plain_result(f"❌ 找不到 `{target}`"); return
+        rid, rname, min_lv, cost, danger, desc = region
+        if user.get('adventure_active') == 1 and user.get('adventure_start'):
+            start = datetime.strptime(user['adventure_start'], "%Y-%m-%d %H:%M:%S")
+            if datetime.now() < start + timedelta(hours=1): conn.close(); _ar = self.adventure._get_region(user['adventure_region']) if user.get('adventure_region') else None; yield event.plain_result(f"⏱️ 你已经在冒险中了！\n📍 {_ar['name'] if _ar else '未知'}\n💡 `pw查看收获` 或 `pw结束冒险`"); return
+
+        if user['level'] < 100 and user['level'] < min_lv: conn.close(); yield event.plain_result(f"🔒 等级不足！{rname} 需{min_lv}级，你当前 Lv.{user['level']}"); return
+        if stamina < cost: conn.close(); yield event.plain_result(f"😫 体力不足！需⚡{cost}，当前⚡{stamina}\n💡 `pw购买体力` 补充"); return
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        adventure_buffs = self.adventure._take_adventure_buffs(user_id)
+        c.execute('UPDATE user_levels SET stamina=?,adventure_start=?,adventure_region=?,adventure_active=1,adventure_last_check=?,adventure_items="{}",adventure_exp=0,adventure_danger=0,adventure_buffs=? WHERE user_id=?',
+                  (stamina - cost, now, rid, now, json.dumps(adventure_buffs, ensure_ascii=False), user_id))
+        conn.commit(); conn.close()
+        end_time = (datetime.now() + timedelta(hours=1)).strftime("%H:%M")
+        privilege = "\n👑 满级特权生效" if user['level'] >= 100 else ""
+        buff_msg = ""
+        if adventure_buffs.get('descs'):
+            buff_msg = "\n🧪 药水效果：" + "、".join(adventure_buffs['descs'])
+        yield event.plain_result(f"🎒 **出发冒险！**{privilege}\n📍 {rname}\n⚡ 消耗：{cost}体力 | 剩余：{stamina-cost}/100\n⏱️ 时长：1小时（到 {end_time}）\n💀 危险率：{danger}%{buff_msg}\n\n✨ 冒险期间每分钟自动随机获取物品！\n💡 `pw查看收获` 随时查看收益\n💡 `pw结束冒险` 提前返回")
+
+    @filter.command("pw转职")
+    async def cmd_profession(self, event: AstrMessageEvent):
+        args = self._parse_args(event, "pw转职")
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        if not args:
+            user = self.adventure._get_user_data(user_id, group_id); current = user.get('profession', 'none')
+            if current == 'none': yield event.plain_result("🎭 **转职系统**\n10级后可选择职业：\n• 🌿 采集师（按收获数量升级，每次冒险最多+20经验）\n• ⚗️ 制药师（按制药成败升级）\n• ⚒️ 锻造师（按锻造成败升级）\n\n💡 `pw转职 [职业名]` 选择\n⚠️ 切换职业后，旧进度清零！"); return
+            prof_name = {'gatherer': '采集师', 'alchemist': '制药师', 'blacksmith': '锻造师'}[current]
+            result = self.adventure.change_profession(user_id, group_id, prof_name); yield event.plain_result(result['msg']); return
+
+        confirm = False
+        if args and args[-1] == '确认':
+            confirm = True
+            args = args[:-1]
+
+        if not args:
+            yield event.plain_result("❌ 请指定职业名：采集师、制药师、锻造师\n💡 用法：`pw转职 [职业名] 确认`")
+            return
+
+        prof_name = args[0]
+        valid = {'采集师': 'gatherer', '制药师': 'alchemist', '锻造师': 'blacksmith'}
+        if prof_name not in valid:
+            yield event.plain_result("❌ 可选：采集师、制药师、锻造师"); return
+
+        user = self.adventure._get_user_data(user_id, group_id)
+        current = user.get('profession', 'none')
+        target = valid[prof_name]
+
+        if current == target:
+            result = self.adventure.change_profession(user_id, group_id, prof_name)
+            yield event.plain_result(result['msg']); return
+
+        is_first = (current == 'none')
+        cost = 500 if is_first else 1000
+
+        if not confirm:
+            current_name_map = {'gatherer': '采集师', 'alchemist': '制药师', 'blacksmith': '锻造师', 'none': '无'}
+            current_name = current_name_map.get(current, '无')
+            cfg = PROF_CONFIG.get(target, {})
+            msg = f"⚠️ **职业切换确认**\n"
+            msg += f"🎭 当前职业：{current_name}\n"
+            msg += f"🎯 目标职业：{cfg.get('emoji', '')} {prof_name}\n"
+            msg += f"💰 所需积分：{cost}（{'首次转职' if is_first else '切换职业'}）\n"
+            msg += f"⚠️ 切换后，旧职业进度**全部清零**！\n"
+            msg += f"💡 请发送：`pw转职 {prof_name} 确认` 以确认切换"
+            yield event.plain_result(msg); return
+
+        # 检查并扣除积分
+        data = await self._get_data("user", user_id)
+        if data["balance"] < cost:
+            yield event.plain_result(f'❌ 积分不足！需要 {cost}，当前 {data["balance"]:.2f}\n💡 请充值后再试'); return
+        data["balance"] -= cost
+        await self._save_data("user", user_id, data)
+
+        result = self.adventure.change_profession(user_id, group_id, prof_name)
+        if result['success']:
+            result['msg'] = result['msg'].replace('📖 从 **初级（Lv.1）** 开始，经验：0\n', f'📖 从 **初级（Lv.1）** 开始，经验：0\n💰 已扣除积分：{cost}\n')
+        yield event.plain_result(result['msg'])
+
+    @filter.command("pw查看收获")
+    async def cmd_check_loot(self, event: AstrMessageEvent):
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user = self.adventure._get_user_data(user_id, group_id)
+        if user.get('adventure_active') != 1: yield event.plain_result("❌ 你尚未参与冒险\n💡 `pw出发冒险 [地区名]` 开始冒险"); return
+        start = datetime.strptime(user['adventure_start'], "%Y-%m-%d %H:%M:%S")
+        if datetime.now() >= start + timedelta(hours=1): result = self.adventure._calc_adventure_loot(user_id, group_id, force_end=True)
+        else: result = self.adventure._calc_adventure_loot(user_id, group_id)
+        if result:
+            await self.adventure._sync_adventure_items_to_kv(user_id, result)
+        user = self.adventure._get_user_data(user_id, group_id)
+        msg = self.adventure._format_loot(result, user); yield event.plain_result(msg)
+
+    @filter.command("pw结束冒险")
+    async def cmd_end_adventure(self, event: AstrMessageEvent):
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user = self.adventure._get_user_data(user_id, group_id)
+        if user.get('adventure_active') != 1: yield event.plain_result("❌ 你尚未参与冒险"); return
+        result = self.adventure._calc_adventure_loot(user_id, group_id, force_end=True)
+        if result:
+            await self.adventure._sync_adventure_items_to_kv(user_id, result)
+        user = self.adventure._get_user_data(user_id, group_id)
+        msg = self.adventure._format_loot(result, user); yield event.plain_result(msg)
+
+    @filter.command("pw购买体力")
+    async def cmd_buy_stamina(self, event: AstrMessageEvent):
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        self.adventure._get_user_data(user_id, group_id)  # 确保 user_levels 行已初始化
+        data = await self._get_data("user", user_id)
+        cost = 100
+        if data["balance"] < cost:
+            yield event.plain_result(f"❌ 积分不足！需要 {cost}，当前 {data['balance']:.2f}\n💡 请充值后再试"); return
+
+        conn = sqlite3.connect(self.adventure.db_path)
+        c = conn.cursor()
+        c.execute('SELECT stamina, max_stamina FROM user_levels WHERE user_id=?', (user_id,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            yield event.plain_result("❌ 体力数据初始化失败，请先发送 `pw出发冒险` 后重试"); return
+        st, mx = row
+        new_st = min(mx or 100, (st or 0) + 10)
+        c.execute('UPDATE user_levels SET stamina=? WHERE user_id=?', (new_st, user_id))
+        conn.commit()
+        conn.close()
+        data["balance"] -= cost
+        await self._save_data("user", user_id, data)
+        yield event.plain_result(f"✅ 体力购买成功！\n⚡ +10 体力\n💰 扣除积分：{cost}\n📊 当前体力：{new_st}/{mx or 100}")
+
+    @filter.command("pw突破")
+    async def cmd_breakthrough(self, event: AstrMessageEvent):
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user = self.adventure._get_user_data(user_id, group_id)
+        level = user.get('level', 1)
+        if level % 10 != 0 or level == 0:
+            yield event.plain_result(f"❌ 当前 Lv.{level}，无需突破\n💡 突破只在 Lv.10/20/30... 时需要进行"); return
+
+        config = self.adventure._get_level_config(level)
+        if not config or not config.get('break_item'):
+            yield event.plain_result("❌ 当前等级无需突破材料"); return
+        need_item = config['break_item']
+        need_count = config['break_count']
+        conn = sqlite3.connect(self.adventure.db_path)
+        c = conn.cursor()
+        c.execute('SELECT item_id, quantity FROM inventory WHERE user_id=? AND group_id=?', (user_id, group_id or ""))
+        inv = {row[0]: row[1] for row in c.fetchall()}
+        c.execute('SELECT id FROM items WHERE name=?', (need_item,))
+        item_row = c.fetchone()
+        conn.close()
+        if not item_row:
+            yield event.plain_result(f"❌ 突破材料 `{need_item}` 不存在"); return
+        item_id = item_row[0]
+        have = inv.get(item_id, 0)
+        if have < need_count:
+            yield event.plain_result(f"❌ 突破材料不足！\n🔒 需要：{need_item} x{need_count}（有{have}）\n💡 `pw背包` 查看材料，或去对应地区冒险获取"); return
+
+        # 扣除材料
+        conn = sqlite3.connect(self.adventure.db_path)
+        c = conn.cursor()
+        c.execute('UPDATE inventory SET quantity=quantity-? WHERE user_id=? AND group_id=? AND item_id=?', (need_count, user_id, group_id or "", item_id))
+        c.execute('DELETE FROM inventory WHERE user_id=? AND group_id=? AND item_id=? AND quantity<=0', (user_id, group_id or "", item_id))
+        # 突破：升级
+        new_level = level + 1
+        new_max_hp = 100 + (new_level - 1) * 10
+        new_attack = 10 + (new_level - 1) * 2
+        new_defense = 5 + (new_level - 1) * 1
+        c.execute('UPDATE user_levels SET level=?,exp=0,max_hp=?,hp=?,attack=?,defense=? WHERE user_id=?', (new_level, new_max_hp, new_max_hp, new_attack, new_defense, user_id))
+        conn.commit()
+        conn.close()
+        new_config = self.adventure._get_level_config(new_level)
+        title = new_config['title'] if new_config else '冒险者'
+        yield event.plain_result(f"🔓 **等级突破成功！**\n🎉 Lv.{level} → Lv.{new_level}\n🎭 称号升级：{config['title']} → {title}\n❤️ 血量上限提升：{user.get('max_hp', 100)} → {new_max_hp}\n⚔️ 攻击提升：{user.get('attack', 10)} → {new_attack}\n🛡️ 防御提升：{user.get('defense', 5)} → {new_defense}\n\n💡 继续 `pw出发冒险` 获取经验吧！")
+
+    @filter.command("pw制药配方")
+    async def cmd_alchemy_recipes(self, event: AstrMessageEvent):
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        result = self.adventure.get_recipes(user_id, group_id); yield event.plain_result(result['msg'])
+
+    @filter.command("pw锻造配方")
+    async def cmd_blacksmith_recipes(self, event: AstrMessageEvent):
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        result = self.adventure.get_recipes(user_id, group_id); yield event.plain_result(result['msg'])
+
+    @filter.command("pw制药")
+    async def cmd_alchemy(self, event: AstrMessageEvent):
+        args = self._parse_args(event, "pw制药")
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        if not args: yield event.plain_result("❌ 请指定药水名称\n💡 `pw制药配方` 查看可制药水"); return
+        result = self.adventure.craft(user_id, group_id, args[0]); yield event.plain_result(result['msg'])
+
+    @filter.command("pw锻造")
+    async def cmd_blacksmith(self, event: AstrMessageEvent):
+        args = self._parse_args(event, "pw锻造")
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        if not args: yield event.plain_result("❌ 请指定物品名称\n💡 `pw锻造配方` 查看可锻造物"); return
+        result = self.adventure.craft(user_id, group_id, args[0]); yield event.plain_result(result['msg'])
+
+    @filter.command("pw使用")
+    async def cmd_use(self, event: AstrMessageEvent):
+        args = self._parse_args(event, "pw使用")
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        if not args: yield event.plain_result("❌ 请指定物品名称\n💡 `pw背包` 查看可用物品"); return
+        result = self.adventure.use_item(user_id, group_id, args[0]); yield event.plain_result(result['msg'])
+
+
+
+    @filter.command("pw冒险介绍")
+    async def cmd_intro(self, event: AstrMessageEvent):
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        msg = self.adventure.get_introduction(user_id, group_id); yield event.plain_result(msg)
+
+    @filter.command("pw角色面板")
+    async def cmd_panel(self, event: AstrMessageEvent):
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        msg = self.adventure.get_character_panel(user_id, group_id); yield event.plain_result(msg)
+
+    @filter.command("pw装备")
+    async def cmd_equip(self, event: AstrMessageEvent):
+        args = self._parse_args(event, "pw装备")
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        if not args: yield event.plain_result("❌ 请指定装备名称\n💡 `pw背包` 查看可用装备"); return
+        result = self.adventure.equip_item(user_id, group_id, args[0]); yield event.plain_result(result['msg'])
+
+    @filter.command("pw卸下")
+    async def cmd_unequip(self, event: AstrMessageEvent):
+        args = self._parse_args(event, "pw卸下")
+        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        if not args: yield event.plain_result("❌ 请指定装备名称\n💡 `pw角色面板` 查看已装备"); return
+        result = self.adventure.unequip_item(user_id, args[0]); yield event.plain_result(result['msg'])
