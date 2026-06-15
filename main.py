@@ -675,14 +675,11 @@ class PaywallPlugin(Star):
         data = await self._get_data(btype, bid)
         if data["balance"] <= 0:
             contact = f"如需充值请加群 {self.contact_group}" if self.contact_group else "联系管理员"
-            req.system_prompt += (
-                f"\n\n[系统提示] 用户积分已耗尽。"
-                f"请用你当前的角色口吻，委婉地告诉用户："
-                f"『哎呀，你的积分好像用完啦~想要继续聊天的话，需要{contact}充值一下哦！』"
-                f"不要直接回答用户的问题，只回复欠费提示。"
-            )
-            req.prompt = "积分不足"
-            logger.info(f"[Paywall] {btype}:{bid} 余额不足，已拦截")
+            # 直接返回提示语，不再调用 LLM
+            tip = f"❌ 你的积分好像用完啦~想要继续聊天的话，需要{contact}充值一下哦！"
+            event.set_result(event.plain_result(tip))
+            logger.info(f"[Paywall] {btype}:{bid} 余额不足，直接拦截回复")
+            return
 
     @filter.on_astrbot_loaded()
     async def on_astrbot_loaded(self):
@@ -1398,16 +1395,22 @@ class PaywallPlugin(Star):
 
         # 卖家到账（扣税）
         seller_id = item["seller"]
-        tax = final_price * (self.tax_rate / 100)
-        seller_income = final_price - tax
+        
+        if seller_id == buyer_id:
+            # 自己买自己的，不收税，直接加回去
+            seller_income = final_price
+            tax = 0
+        else:
+            tax = final_price * (self.tax_rate / 100)
+            seller_income = final_price - tax
 
-        # 给卖家到账（即使是自己买自己的商品）
+        # 给卖家到账
         seller_data = await self._get_data("user", seller_id)
         seller_data["balance"] += seller_income
         await self._save_data("user", seller_id, seller_data)
 
-        # 税款给第一个管理员（始终扣税）
-        if self.admins:
+        # 税款给第一个管理员（只有非自购且有管理员时才扣税）
+        if self.admins and tax > 0:
             admin_data = await self._get_data("user", self.admins[0])
             admin_data["balance"] += tax
             await self._save_data("user", self.admins[0], admin_data)
@@ -1501,6 +1504,11 @@ class PaywallPlugin(Star):
 
         item_id = parts[0].strip().upper()
         item = await self._get_shop_item(item_id)
+        shop_type = "百货"
+        if item is None:
+            item = await self._get_item_shop_item(item_id)
+            shop_type = "道具"
+            
         if item is None:
             yield event.plain_result("❌ 商品不存在")
             return
@@ -1511,7 +1519,10 @@ class PaywallPlugin(Star):
             return
 
         item["stock"] = 0
-        await self._save_shop_item(item_id, item)
+        if shop_type == "道具":
+            await self._save_item_shop_item(item_id, item)
+        else:
+            await self._save_shop_item(item_id, item)
 
         logger.info(f"[Paywall] {user_id} 下架商品 {item_id}")
         yield event.plain_result(f"✅ 下架成功！\n商品: {item['name']}\n编号: {item_id}")
@@ -2411,7 +2422,16 @@ class PaywallPlugin(Star):
             grabbed_amounts = [g["amount"] for g in rp_data["grabbed"]]
             available = [a for a in amounts if round(a, 2) not in [round(g, 2) for g in grabbed_amounts]]
             if not available:
-                amount = round(remaining, 2) if remaining_count == 1 else round(random.uniform(0.01, remaining - 0.01 * (remaining_count - 1)), 2)
+                if remaining_count == 1:
+                    amount = round(remaining, 2)
+                else:
+                    # 确保随机范围合法
+                    min_reserved = 0.01 * (remaining_count - 1)
+                    max_val = remaining - min_reserved
+                    if max_val > 0.01:
+                        amount = round(random.uniform(0.01, max_val), 2)
+                    else:
+                        amount = 0.01
             else:
                 amount = random.choice(available)
 

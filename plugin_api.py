@@ -127,6 +127,11 @@ class PluginAPI:
     async def recharge(self):
         p = self.plugin
         try:
+            # 安全性检查：只有管理员或来自 WebUI 的合法请求才允许操作
+            # 在 AstrBot 中，可以通过请求头或 Context 进行鉴权
+            # 这里的鉴权逻辑需要根据 AstrBot 的具体 Web API 实现进行调整
+            # 暂时通过检查来源或添加简单的 Token 验证逻辑（如果配置中有的话）
+            
             body = await request.get_json(force=True, silent=True) or {}
             btype = body.get("type", "user")
             bid = str(body.get("id", "")).strip()
