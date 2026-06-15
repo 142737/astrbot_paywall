@@ -1,4 +1,4 @@
-"""
+﻿"""
 Paywall WebUI 后端 API
 
 通过 AstrBot 的 context.register_web_api 注册路由，
@@ -29,11 +29,11 @@ class PluginAPI:
             ("delist", self.delist, ["POST"], "Paywall 下架商品"),
             ("list_item", self.list_item, ["POST"], "Paywall 上架商品"),
             ("genkey", self.genkey, ["POST"], "Paywall 生成卡密"),
+            ("upload_bg", self.upload_bg, ["POST"], "Paywall 上传壁纸"),
         ]
         for ep, handler, methods, desc in routes:
             try:
-                context.register_web_api(
-                    f"/{PLUGIN_NAME}/{ep}", handler, methods, desc
+                context.register_web_api(                    f"/{PLUGIN_NAME}/{ep}", handler, methods, desc
                 )
             except Exception as e:
                 logger.warning(f"[Paywall] 注册 API /{PLUGIN_NAME}/{ep} 失败: {e}")
@@ -145,8 +145,7 @@ class PluginAPI:
                 d["balance"] = max(0.0, float(d.get("balance", 0)) + amount)
             await p._save_data(btype, bid, d)
 
-            logger.info(
-                f"[Paywall][WebUI] {btype}:{bid} "
+            logger.info(                f"[Paywall][WebUI] {btype}:{bid} "
                 f"{'设置额度为' if mode == 'set' else '调整'} {amount}，"
                 f"新余额 {d['balance']:.2f}"
             )
@@ -224,13 +223,82 @@ class PluginAPI:
                 await p._save_shop_item(item_id, item)
                 await p._add_shop_index(item_id)
 
-            logger.info(
-                f"[Paywall][WebUI] 上架{shop_type} {name} "
+            logger.info(                f"[Paywall][WebUI] 上架{shop_type} {name} "
                 f"价格 {price} 库存 {stock} 编号 {item_id}"
             )
             return jsonify({"success": True, "id": item_id, "name": name})
         except Exception as e:
             logger.error(f"[Paywall] list_item 失败: {e}", exc_info=True)
+            return jsonify({"success": False, "error": str(e)})
+
+    async def upload_bg(self):
+        """上传壁纸/动态壁纸（支持 MP4 分片上传），图片保存为 bg.jpg，视频保存为 bg.mp4"""
+        p = self.plugin
+        try:
+            body = await request.get_json(force=True, silent=True) or {}
+            data = body.get("data", "")
+            index = int(body.get("index", 0))
+            total = int(body.get("total", 1))
+            filename = body.get("name", "wallpaper.jpg")
+            if not data:
+                return jsonify({"success": False, "error": "未收到文件数据"})
+
+            import base64, os
+            file_data = base64.b64decode(data)
+            if len(file_data) == 0:
+                return jsonify({"success": False, "error": "文件数据为空"})
+
+            ext = os.path.splitext(filename)[1].lower()
+            out_name = "bg.mp4" if ext == ".mp4" else "bg.jpg"
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+
+            if total > 1:
+                # 分片上传（大文件）
+                temp_dir = os.path.join(base_dir, ".bg_upload_temp")
+                os.makedirs(temp_dir, exist_ok=True)
+                chunk_path = os.path.join(temp_dir, f"chunk_{index:06d}")
+                with open(chunk_path, 'wb') as f:
+                    f.write(file_data)
+                if index >= total - 1:
+                    # 最后一片：合并输出
+                    out_paths = [
+                        os.path.join(base_dir, out_name),
+                        os.path.join(base_dir, "pages", "paywall-admin", out_name),
+                    ]
+                    # 先把所有分片读入内存，再写入各路径（避免先删后找不到）
+                    all_chunks = []
+                    for i in range(total):
+                        cf = os.path.join(temp_dir, f"chunk_{i:06d}")
+                        if os.path.exists(cf):
+                            with open(cf, 'rb') as f:
+                                all_chunks.append(f.read())
+                            os.remove(cf)
+                    for out_path in out_paths:
+                        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                        with open(out_path, 'wb') as f:
+                            for data in all_chunks:
+                                f.write(data)
+                    try: os.rmdir(temp_dir)
+                    except: pass
+                    logger.info(f"[Paywall] 壁纸已更新 ({out_name}, {total} chunks, {os.path.getsize(out_paths[0])} bytes)")
+                    return jsonify({"success": True, "message": "壁纸上传完成！"})
+                else:
+                    return jsonify({"success": True, "chunk_received": True})
+
+            # 单文件（图片或小文件）
+            paths = [
+                os.path.join(base_dir, out_name),
+                os.path.join(base_dir, "pages", "paywall-admin", out_name),
+            ]
+            for path in paths:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, 'wb') as f:
+                    f.write(file_data)
+
+            logger.info(f"[Paywall] 壁纸已更新 ({out_name}, {len(file_data)} bytes)")
+            return jsonify({"success": True, "message": "壁纸更新成功！"})
+        except Exception as e:
+            logger.error(f"[Paywall] 上传壁纸失败: {e}", exc_info=True)
             return jsonify({"success": False, "error": str(e)})
 
     async def genkey(self):
