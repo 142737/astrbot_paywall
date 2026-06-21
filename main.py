@@ -547,8 +547,8 @@ class AdventureSystem:
                     inv.append({'name': name, 'price': price, 'source': '冒险', 'date': now_str})
             conn.close()
             await self.plugin._save_inventory(user_id, inv)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f'[Paywall] 冒险物品同步失败: {e}')
     # ---------- 格式化收获报告（状态栏置顶）----------
     def _format_loot(self, result: dict, user_data: dict) -> str:
         region = self._get_region(user_data.get('adventure_region'))
@@ -1233,11 +1233,11 @@ class AdventureSystem:
             emoji = rarity_emoji.get(rarity, '⚪')
             temoji = type_emoji.get(itype, '')
             if itype == 'consumable':
-                msg += f"  {emoji} {name} x{qty}  💡 `pw使用 {name}`\n"
+                msg += f"  {emoji} {name}×{qty}  💡 `pw使用 {name}`\n"
             elif itype == 'equipment':
-                msg += f"  {emoji} {name} x{qty}（已装备）\n"
+                msg += f"  {emoji} {name}×{qty}（已装备）\n"
             else:
-                msg += f"  {emoji} {name} x{qty}\n"
+                msg += f"  {emoji} {name}×{qty}\n"
         return msg
 
     def get_introduction(self, user_id: str, group_id: str) -> str:
@@ -3184,12 +3184,34 @@ class PaywallPlugin(Star):
             yield event.plain_result("📭 你的背包是空的")
             return
 
-        items = []
-        for item in inventory[-30:]:
-            items.append(f"{item['name']} ({item['source']} {item['date']})")
+        body = self._format_stacked_inventory(inventory)
+        yield event.plain_result(f"🎒 **背包物品** ({len(inventory)} 件 / {len(body)} 种)\n━━━━━━━━━━━━━━\n" + "\n".join(body) + "\n━━━━━━━━━━━━━━")
 
-        body = "\n".join(items)
-        yield event.plain_result(f"🎒 **背包物品** ({len(inventory)} 件)\n━━━━━━━━━━━━━━\n{body}\n━━━━━━━━━━━━━━")
+    def _format_stacked_inventory(self, inventory: list) -> list:
+        """按名称堆叠 KV 背包，避免同名物品刷屏。"""
+        stacked = {}
+        order = []
+        for item in inventory:
+            name = str(item.get("name", "未知物品"))
+            if name not in stacked:
+                stacked[name] = {
+                    "count": 0,
+                    "source": item.get("source", ""),
+                    "date": item.get("date", ""),
+                }
+                order.append(name)
+            stacked[name]["count"] += 1
+            if item.get("date"):
+                stacked[name]["date"] = item.get("date")
+            if item.get("source"):
+                stacked[name]["source"] = item.get("source")
+
+        lines = []
+        for name in order:
+            info = stacked[name]
+            lines.append(f"{name}×{info['count']}")
+        return lines
+
     async def _show_inventory(self, event: AstrMessageEvent):
         user_id = str(event.get_sender_id())
         group_id = event.get_group_id() or ""
@@ -3199,10 +3221,8 @@ class PaywallPlugin(Star):
         parts = []
 
         if kv_inv:
-            items = []
-            for item in kv_inv[-30:]:
-                items.append(f"{item['name']} ({item['source']} {item['date']})")
-            parts.append(f"🎒 **背包物品** ({len(kv_inv)} 件)\n" + "\n".join(items))
+            items = self._format_stacked_inventory(kv_inv)
+            parts.append(f"🎒 **背包物品** ({len(kv_inv)} 件 / {len(items)} 种)\n" + "\n".join(items))
 
         if adv_inv and "空空如也" not in adv_inv:
             parts.append(adv_inv)
@@ -4673,7 +4693,7 @@ class PaywallPlugin(Star):
     @filter.command("pw出发冒险")
     async def cmd_adventure(self, event: AstrMessageEvent):
         args = self._parse_args(event, "pw出发冒险")
-        user_id = event.get_sender_id()
+        user_id = str(event.get_sender_id())
         group_id = event.get_group_id() or ""
         user = self.adventure._get_user_data(user_id, group_id)
         stamina = self.adventure._recover_stamina(user_id)
@@ -4727,7 +4747,7 @@ class PaywallPlugin(Star):
     @filter.command("pw转职")
     async def cmd_profession(self, event: AstrMessageEvent):
         args = self._parse_args(event, "pw转职")
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         if not args:
             user = self.adventure._get_user_data(user_id, group_id); current = user.get('profession', 'none')
             if current == 'none': yield event.plain_result("🎭 **转职系统**\n10级后可选择职业：\n• 🌿 采集师（按收获数量升级，每次冒险最多+20经验）\n• ⚗️ 制药师（按制药成败升级）\n• ⚒️ 锻造师（按锻造成败升级）\n\n💡 `pw转职 [职业名]` 选择\n⚠️ 切换职业后，旧进度清零！"); return
@@ -4785,7 +4805,7 @@ class PaywallPlugin(Star):
 
     @filter.command("pw查看收获")
     async def cmd_check_loot(self, event: AstrMessageEvent):
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         user = self.adventure._get_user_data(user_id, group_id)
         if user.get('adventure_active') != 1: yield event.plain_result("❌ 你尚未参与冒险\n💡 `pw出发冒险 [地区名]` 开始冒险"); return
         start = datetime.strptime(user['adventure_start'], "%Y-%m-%d %H:%M:%S")
@@ -4798,7 +4818,7 @@ class PaywallPlugin(Star):
 
     @filter.command("pw结束冒险")
     async def cmd_end_adventure(self, event: AstrMessageEvent):
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         user = self.adventure._get_user_data(user_id, group_id)
         if user.get('adventure_active') != 1: yield event.plain_result("❌ 你尚未参与冒险"); return
         result = self.adventure._calc_adventure_loot(user_id, group_id, force_end=True)
@@ -4809,7 +4829,7 @@ class PaywallPlugin(Star):
 
     @filter.command("pw购买体力")
     async def cmd_buy_stamina(self, event: AstrMessageEvent):
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         self.adventure._get_user_data(user_id, group_id)  # 确保 user_levels 行已初始化
         data = await self._get_data("user", user_id)
         cost = 100
@@ -4834,7 +4854,7 @@ class PaywallPlugin(Star):
 
     @filter.command("pw突破")
     async def cmd_breakthrough(self, event: AstrMessageEvent):
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         user = self.adventure._get_user_data(user_id, group_id)
         level = user.get('level', 1)
         if level % 10 != 0 or level == 0:
@@ -4878,32 +4898,32 @@ class PaywallPlugin(Star):
 
     @filter.command("pw制药配方")
     async def cmd_alchemy_recipes(self, event: AstrMessageEvent):
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         result = self.adventure.get_recipes(user_id, group_id); yield event.plain_result(result['msg'])
 
     @filter.command("pw锻造配方")
     async def cmd_blacksmith_recipes(self, event: AstrMessageEvent):
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         result = self.adventure.get_recipes(user_id, group_id); yield event.plain_result(result['msg'])
 
     @filter.command("pw制药")
     async def cmd_alchemy(self, event: AstrMessageEvent):
         args = self._parse_args(event, "pw制药")
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         if not args: yield event.plain_result("❌ 请指定药水名称\n💡 `pw制药配方` 查看可制药水"); return
         result = self.adventure.craft(user_id, group_id, args[0]); yield event.plain_result(result['msg'])
 
     @filter.command("pw锻造")
     async def cmd_blacksmith(self, event: AstrMessageEvent):
         args = self._parse_args(event, "pw锻造")
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         if not args: yield event.plain_result("❌ 请指定物品名称\n💡 `pw锻造配方` 查看可锻造物"); return
         result = self.adventure.craft(user_id, group_id, args[0]); yield event.plain_result(result['msg'])
 
     @filter.command("pw使用")
     async def cmd_use(self, event: AstrMessageEvent):
         args = self._parse_args(event, "pw使用")
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         if not args: yield event.plain_result("❌ 请指定物品名称\n💡 `pw背包` 查看可用物品"); return
         result = self.adventure.use_item(user_id, group_id, args[0]); yield event.plain_result(result['msg'])
 
@@ -4911,24 +4931,24 @@ class PaywallPlugin(Star):
 
     @filter.command("pw冒险介绍")
     async def cmd_intro(self, event: AstrMessageEvent):
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         msg = self.adventure.get_introduction(user_id, group_id); yield event.plain_result(msg)
 
     @filter.command("pw角色面板")
     async def cmd_panel(self, event: AstrMessageEvent):
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         msg = self.adventure.get_character_panel(user_id, group_id); yield event.plain_result(msg)
 
     @filter.command("pw装备")
     async def cmd_equip(self, event: AstrMessageEvent):
         args = self._parse_args(event, "pw装备")
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         if not args: yield event.plain_result("❌ 请指定装备名称\n💡 `pw背包` 查看可用装备"); return
         result = self.adventure.equip_item(user_id, group_id, args[0]); yield event.plain_result(result['msg'])
 
     @filter.command("pw卸下")
     async def cmd_unequip(self, event: AstrMessageEvent):
         args = self._parse_args(event, "pw卸下")
-        user_id = event.get_sender_id(); group_id = event.get_group_id() or ""
+        user_id = str(event.get_sender_id()); group_id = event.get_group_id() or ""
         if not args: yield event.plain_result("❌ 请指定装备名称\n💡 `pw角色面板` 查看已装备"); return
         result = self.adventure.unequip_item(user_id, args[0]); yield event.plain_result(result['msg'])
