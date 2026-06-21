@@ -30,6 +30,8 @@ class PluginAPI:
             ("list_item", self.list_item, ["POST"], "Paywall 上架商品"),
             ("genkey", self.genkey, ["POST"], "Paywall 生成卡密"),
             ("upload_bg", self.upload_bg, ["POST"], "Paywall 上传壁纸"),
+            ("get_settings", self.get_settings, ["GET"], "Paywall 获取设置"),
+            ("save_settings", self.save_settings, ["POST"], "Paywall 保存设置"),
         ]
         for ep, handler, methods, desc in routes:
             try:
@@ -334,4 +336,34 @@ class PluginAPI:
             return jsonify({"success": True, "keys": keys})
         except Exception as e:
             logger.error(f"[Paywall] genkey 失败: {e}", exc_info=True)
+            return jsonify({"success": False, "error": str(e)})
+
+    async def get_settings(self):
+        p = self.plugin
+        try:
+            raw = await p.get_kv_data("webui_settings", None)
+            if raw is None or raw == "" or raw == "null":
+                return jsonify({"success": True, "settings": {}})
+            if isinstance(raw, str):
+                import json as _json
+                data = _json.loads(raw)
+            else:
+                data = raw
+            return jsonify({"success": True, "settings": data if isinstance(data, dict) else {}})
+        except Exception as e:
+            logger.error(f"[Paywall] get_settings 失败: {e}", exc_info=True)
+            return jsonify({"success": False, "error": str(e)})
+
+    async def save_settings(self):
+        p = self.plugin
+        try:
+            body = await request.get_json(force=True, silent=True) or {}
+            settings = body.get("settings", {})
+            if not isinstance(settings, dict):
+                return jsonify({"success": False, "error": "settings 必须是对象"})
+            await p.put_kv_data("webui_settings", json.dumps(settings, ensure_ascii=False))
+            logger.info(f"[Paywall] WebUI 设置已保存")
+            return jsonify({"success": True, "message": "设置已保存"})
+        except Exception as e:
+            logger.error(f"[Paywall] save_settings 失败: {e}", exc_info=True)
             return jsonify({"success": False, "error": str(e)})
